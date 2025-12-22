@@ -81,10 +81,10 @@ describe('excelUtils', () => {
     })
 
     it('should handle dates correctly (Smart Date vs Timestamp)', () => {
-      // Pure Date (UTC Midnight)
-      const pureDate = new Date('2023-01-01T00:00:00.000Z')
-      // Timestamp (Non-midnight)
-      const timestamp = new Date('2023-01-01T12:30:45.000Z')
+      // Create dates representing what we see in Excel (Local Time)
+      // e.g. "2023-01-01" in local time
+      const pureDate = new Date(2023, 0, 1, 0, 0, 0) 
+      const timestamp = new Date(2023, 0, 1, 12, 30, 45)
       
       const buffer = createExcelBuffer({
         Dates: [
@@ -97,11 +97,31 @@ describe('excelUtils', () => {
       const { results } = processExcelBuffer(buffer)
       const csv = results[0].csvData
       
-      // Pure date should be YYYY-MM-DD
+      // Should preserve "Wall Time" regardless of timezone
       expect(csv).toContain(`"Date","2023-01-01"`)
-      
       // Timestamp should be ISO string
-      expect(csv).toContain(`"Time","${timestamp.toISOString()}"`)
+      expect(csv).toContain(`"Time","2023-01-01T12:30:45.000"`)
+    })
+
+    it('should snap near-midnight times to DATE', () => {
+      // 23:59:30 -> Should snap to next day (2023-01-02)
+      const nearMidnight = new Date(2023, 0, 1, 23, 59, 30)
+      // 00:00:20 -> Should snap to current day (2023-01-01)
+      const justAfterMidnight = new Date(2023, 0, 1, 0, 0, 20)
+      
+      const buffer = createExcelBuffer({
+        Snaps: [
+          ['Type', 'Value'],
+          ['Late', nearMidnight],
+          ['Early', justAfterMidnight],
+        ],
+      })
+
+      const { results } = processExcelBuffer(buffer)
+      const csv = results[0].csvData
+      
+      expect(csv).toContain(`"Late","2023-01-02"`)
+      expect(csv).toContain(`"Early","2023-01-01"`)
     })
 
     it('should handle quotes and special characters', () => {

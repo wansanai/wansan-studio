@@ -126,21 +126,48 @@ export function processExcelBuffer(
           if (cell === null || cell === undefined) {
             strCell = ''
           } else if (cell instanceof Date && !isNaN(cell.getTime())) {
-            // Fix Excel floating point date precision issues (e.g. 23:59:59.999)
-            // Round to nearest second
+            // 1. Fix Excel floating point date precision issues (e.g. 23:59:59.999)
+            // Round to nearest second to stabilize
             const time = cell.getTime()
             const roundedTime = Math.round(time / 1000) * 1000
             const roundedDate = new Date(roundedTime)
 
-            // Smart formatting for DuckDB type inference
-            if (
-              roundedDate.getUTCHours() === 0 &&
-              roundedDate.getUTCMinutes() === 0 &&
-              roundedDate.getUTCSeconds() === 0
-            ) {
-              strCell = roundedDate.toISOString().split('T')[0]
+            // 2. Use LOCAL methods to extract "Wall Time" (the literal values seen in Excel)
+            // XLSX (without UTC:true) emits dates relative to the local timezone.
+            // Using getFullYear(), getHours() etc. matches the cell's appearance.
+            const year = roundedDate.getFullYear()
+            const month = String(roundedDate.getMonth() + 1).padStart(2, '0')
+            const day = String(roundedDate.getDate()).padStart(2, '0')
+            const hours = roundedDate.getHours()
+            const minutes = roundedDate.getMinutes()
+            const seconds = roundedDate.getSeconds()
+            const ms = roundedDate.getMilliseconds()
+
+            // 3. Smart Formatting & Snap-to-Midnight
+            // Calculate total seconds into the day
+            const secondsInDay = hours * 3600 + minutes * 60 + seconds
+            
+            // Tolerance: 60 seconds (covers 23:59:xx and 00:00:xx noise)
+            const TOLERANCE = 60 
+            
+            if (secondsInDay < TOLERANCE) {
+              // Close to start of day -> Snap to current day 00:00:00
+              strCell = `${year}-${month}-${day}`
+            } else if (86400 - secondsInDay < TOLERANCE) {
+              // Close to end of day -> Snap to next day 00:00:00
+              // Create a new date object to handle month/year rollover correctly
+              const nextDay = new Date(year, parseInt(month) - 1, Number(day) + 1)
+              const ndYear = nextDay.getFullYear()
+              const ndMonth = String(nextDay.getMonth() + 1).padStart(2, '0')
+              const ndDay = String(nextDay.getDate()).padStart(2, '0')
+              strCell = `${ndYear}-${ndMonth}-${ndDay}`
             } else {
-              strCell = roundedDate.toISOString()
+              // Timestamp -> YYYY-MM-DDTHH:mm:ss.sss (Local/Naive ISO)
+              const h = String(hours).padStart(2, '0')
+              const min = String(minutes).padStart(2, '0')
+              const s = String(seconds).padStart(2, '0')
+              const msec = String(ms).padStart(3, '0')
+              strCell = `${year}-${month}-${day}T${h}:${min}:${s}.${msec}`
             }
           } else {
             strCell = String(cell)
