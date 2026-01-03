@@ -11,6 +11,8 @@ import {
 } from '../stores/useSettingsStore'
 import { useTranslation } from 'react-i18next'
 import legacyData from '@shared/legacy-data.ts'
+import TestPage from './gen-ui/TestPage'
+import { X } from 'lucide-react'
 
 interface LogEntry {
   id: number
@@ -28,6 +30,7 @@ interface DevConsoleProps {
 export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [isMinimized, setIsMinimized] = useState(false)
+  const [showGenUITest, setShowGenUITest] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [activeTab, setActiveTab] = useState<'console' | 'tools'>('console')
   const [language, setLanguage] = useState(i18n.language || 'en')
@@ -275,6 +278,22 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
   // Moved check here to respect Rules of Hooks
   if (!isDev) return null
 
+  if (showGenUITest) {
+    return (
+      <div className="fixed inset-0 z-[300] bg-white overflow-auto flex flex-col">
+        <div className="absolute top-4 right-4 z-50">
+          <button
+            onClick={() => setShowGenUITest(false)}
+            className="p-2 bg-gray-800 text-white rounded-full hover:bg-gray-700 shadow-xl"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+        <TestPage />
+      </div>
+    )
+  }
+
   if (isMinimized) {
     return (
       <button
@@ -397,6 +416,12 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
                 className="px-3 py-2 bg-red-600 hover:bg-red-500 rounded text-sm"
               >
                 ❌ Test Error
+              </button>
+              <button
+                onClick={() => setShowGenUITest(true)}
+                className="px-3 py-2 bg-purple-600 hover:bg-purple-500 rounded text-sm font-semibold shadow-lg shadow-purple-900/20"
+              >
+                🧬 GenUI Spike
               </button>
             </div>
             <div className="flex flex-wrap gap-2 items-center">

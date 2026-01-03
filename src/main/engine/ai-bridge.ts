@@ -10,16 +10,19 @@ import {
   AnalysisResultSchema,
   ContextAnalysisResultSchema,
   FixSQLResultSchema,
+  GenUIResponseSchema,
 } from '@shared/schemas/analysis.ts'
 import {
   CONTEXT_ANALYSIS_SYSTEM_PROMPT,
   getSystemPrompt,
   serializeSchemas,
 } from './prompts.ts'
+import { GEN_UI_SYSTEM_PROMPT } from './prompts/gen-ui-prompt.ts'
 import { isDev } from '../utils/env'
 import { ChatCompletionCreateParamsNonStreaming } from 'openai/resources'
 import { parse, safeStringify } from '@shared/serialization.ts'
 import { extractJSON } from '@shared/utils/json-utils'
+import { GenUIResponseResult } from '@shared/schemas/analysis.ts'
 
 function getModelToUse(preferredModel?: string) {
   const envModel = process.env.OPENAI_MODEL
@@ -252,5 +255,53 @@ Fix the SQL. Ensure all table/column names are double-quoted and match the schem
     return FixSQLResultSchema.parse(parse(cleanedJson))
   } catch (e) {
     throw new Error(`Failed to parse fix result: ${resultJson}`)
+  }
+}
+
+export async function generateComponent(
+  openai: OpenAI,
+  userQuery: string,
+  dataSample: any[],
+  model?: string
+): Promise<GenUIResponseResult> {
+  const modelToUse = getModelToUse(model)
+  const userPrompt = `User Query: "${userQuery}"\nData Sample (First 5 rows): ${safeStringify(
+    dataSample.slice(0, 5),
+    2
+  )}`
+
+  const body: ChatCompletionCreateParamsNonStreaming = {
+    model: modelToUse,
+    messages: [
+      { role: 'system', content: GEN_UI_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+    response_format: { type: 'json_object' },
+  }
+
+  if (isDev()) {
+    console.log('[AI Bridge] generateComponent pre request - body:', body)
+  }
+
+  const response = await openai.chat.completions.create(body)
+  const resultJson = response.choices[0].message.content
+
+  if (!resultJson) {
+    throw new Error('AI returned an empty response for GenUI generation.')
+  }
+
+  if (isDev()) {
+    console.log('[AI Bridge] generateComponent post request - resultJson:', resultJson)
+  }
+
+  try {
+    const cleanedJson = extractJSON(resultJson)
+    const parsedResult = parse(cleanedJson)
+    return GenUIResponseSchema.parse(parsedResult)
+  } catch (error) {
+    console.error('[AI Bridge] Failed to parse or validate GenUI response:', error)
+    throw new Error(
+      `AI returned invalid JSON or structure for GenUI. Raw response: ${resultJson}`
+    )
   }
 }

@@ -63,3 +63,13 @@ export const FixSQLResultSchema = z.object({
   sql: z.string(),
   reasoning: z.string(),
 })
+
+export const GenUIResponseSchema = z.object({
+  spec: z.object({
+    html: z.string(),
+    js: z.string(),
+  }),
+  reasoning: z.string(),
+})
+
+export type GenUIResponseResult = z.infer<typeof GenUIResponseSchema>

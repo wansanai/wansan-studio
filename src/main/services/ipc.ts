@@ -266,6 +266,23 @@ export function setupIPC(
     }
   )
 
+  // AI Generate UI
+  ipcMain.handle(
+    'ai:generate-ui',
+    async (_event, userQuery: string, dataSample: any[]) => {
+      try {
+        const result = await aiService.generateComponent(userQuery, dataSample)
+        return { success: true, data: result }
+      } catch (error) {
+        console.error('Generate UI error:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      }
+    }
+  )
+
   // AI 分析上下文 (关系 + 提示词)
   ipcMain.handle(
     'analyze-context',

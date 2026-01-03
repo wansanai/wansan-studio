@@ -1,7 +1,12 @@
 import Store from 'electron-store'
 import { OpenAI } from 'openai'
 import type { ClientOptions } from 'openai'
-import { generateAnalysis, analyzeContext, fixSQL } from '../engine/ai-bridge'
+import {
+  generateAnalysis,
+  analyzeContext,
+  fixSQL,
+  generateComponent,
+} from '../engine/ai-bridge'
 import crypto from 'crypto'
 import { secureGet, secureSet } from './secure-storage'
 import type {
@@ -12,6 +17,7 @@ import type {
   AIConfig,
   DomainRule,
 } from '@shared/types.ts'
+import type { GenUIResponse } from '@shared/gen-ui-types'
 
 // --- Security Config (Must match obfuscate-tool.js) ---
 const MASTER_SALT = 'wansan-studio-2025-special-security-salt'
@@ -331,6 +337,14 @@ CRITICAL SYNTAX RULES:
     })
 
     return response.choices[0].message.content?.trim() || ''
+  }
+
+  async generateComponent(
+    userQuery: string,
+    dataSample: any[]
+  ): Promise<GenUIResponse> {
+    const client = this.requireOpenAI()
+    return await generateComponent(client, userQuery, dataSample, this.model)
   }
 
   clearConfig() {

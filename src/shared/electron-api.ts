@@ -17,6 +17,7 @@ import {
   AskAIResponse,
   AnalyzeContextResponse,
 } from './api-types'
+import { GenUIResponse } from './gen-ui-types'
 
 export interface IngestPreCheckParams {
   filePath: string
@@ -135,6 +136,10 @@ export interface ElectronAPI {
     columns: Array<{ name: string; type: string }>
     mode: 'generate' | 'refine'
   }) => Promise<IPCResponse<string>>
+  generateUI: (
+    userQuery: string,
+    dataSample: any[]
+  ) => Promise<IPCResponse<GenUIResponse>>
 
   // AI Config
   getAIConfig: () => Promise<AIConfigResponse>

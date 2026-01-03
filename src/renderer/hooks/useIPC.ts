@@ -42,6 +42,13 @@ const mockIPC: ElectronAPI = {
     success: true,
     data: '1 + 1',
   }),
+  generateUI: async () => ({
+    success: true,
+    data: {
+      spec: { html: '<div></div>', js: '' },
+      reasoning: 'mock',
+    },
+  }),
   getAIConfig: async (): Promise<AIConfigResponse> => {
     return { success: true, data: {} }
   },
