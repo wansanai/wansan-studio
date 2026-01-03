@@ -1,68 +1,74 @@
 import React, { useState } from 'react'
 import ShadowWidget, { GenComponentSpec } from './ShadowWidget'
-import { Loader2, Play, Database, Code } from 'lucide-react'
+import { Loader2, Play, AlertCircle, Info, Zap } from 'lucide-react'
 
-// --- Mock Data Definitions ---
-const MOCK_DATASETS: Record<string, any[]> = {
-  sales: [
-    { date: 'Mon', value: 150 },
-    { date: 'Tue', value: 230 },
-    { date: 'Wed', value: 224 },
-    { date: 'Thu', value: 218 },
-    { date: 'Fri', value: 135 },
-    { date: 'Sat', value: 147 },
-    { date: 'Sun', value: 260 },
-  ],
-  growth: [
-    { month: 'Jan', users: 1200, growth: 5 },
-    { month: 'Feb', users: 1350, growth: 12 },
-    { month: 'Mar', users: 1600, growth: 18 },
-    { month: 'Apr', users: 2100, growth: 31 },
-    { month: 'May', users: 2800, growth: 33 },
-  ],
-  server: [
-    { time: '10:00', cpu: 45, memory: 60 },
-    { time: '10:05', cpu: 55, memory: 62 },
-    { time: '10:10', cpu: 89, memory: 70 },
-    { time: '10:15', cpu: 30, memory: 55 },
-    { time: '10:20', cpu: 40, memory: 58 },
-  ],
+// --- Step 1: Mock Data for Insight-Driven Spike ---
+const INSIGHT_SCENARIOS = {
+  normal: {
+    label: "Normal Growth (User Growth)",
+    data: { values: [100, 115, 120, 135], context: "User Growth" }
+  },
+  surge: {
+    label: "Critical Surge (Compliance Issues)",
+    data: { values: [100, 150, 300, 650], context: "Compliance Issues" }
+  }
 }
 
-// --- Initial Mock Spec (Fallback) ---
 const INITIAL_SPEC: GenComponentSpec = {
-  html: '<div class="rounded-2xl shadow-sm bg-zinc-50 p-6">\n  <div class="flex justify-between items-center mb-6">\n    <h2 class="text-2xl font-semibold text-zinc-900">用户增长趋势</h2>\n    <div class="text-sm text-zinc-500">面积图</div>\n  </div>\n  <div id="chart-container" class="h-96 w-full rounded-xl bg-white shadow-inner"></div>\n  <div class="mt-4 text-sm text-zinc-600">\n    数据展示每月用户数量变化趋势，使用面积图突出增长幅度。\n  </div>\n</div>',
-  js: "const container = root.querySelector('#chart-container');\nif (!container) return;\n\nconst chart = echarts.init(container);\n\nif (!data || !Array.isArray(data) || data.length === 0) {\n  chart.setOption({\n    title: {\n      text: '暂无数据',\n      left: 'center',\n      top: 'center',\n      textStyle: { color: '#9ca3af', fontSize: 16 }\n    }\n  });\n  return;\n}\n\nconst months = data.map(item => item.month).filter(Boolean);\nconst users = data.map(item => item.users).filter(v => typeof v === 'number');\n\nconst option = {\n  tooltip: {\n    trigger: 'axis',\n    backgroundColor: 'rgba(255, 255, 255, 0.95)',\n    borderColor: '#e5e7eb',\n    borderWidth: 1,\n    textStyle: { color: '#374151' },\n    formatter: function(params) {\n      const point = params[0];\n      return `${point.name}<br/>用户数: <b>${point.value}</b>`;\n    }\n  },\n  grid: {\n    left: '3%',\n    right: '4%',\n    bottom: '10%',\n    top: '10%',\n    containLabel: true\n  },\n  xAxis: {\n    type: 'category',\n    boundaryGap: false,\n    data: months,\n    axisLine: { lineStyle: { color: '#d1d5db' } },\n    axisLabel: { color: '#6b7280' }\n  },\n  yAxis: {\n    type: 'value',\n    axisLine: { lineStyle: { color: '#d1d5db' } },\n    axisLabel: { color: '#6b7280' },\n    splitLine: { lineStyle: { color: '#f3f4f6', type: 'dashed' } }\n  },\n  series: [\n    {\n      name: '用户数',\n      type: 'line',\n      smooth: true,\n      stack: 'Total',\n      areaStyle: {\n        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [\n          { offset: 0, color: 'rgba(79, 70, 229, 0.4)' },\n          { offset: 1, color: 'rgba(79, 70, 229, 0.05)' }\n        ])\n      },\n      lineStyle: { color: '#4f46e5', width: 3 },\n      itemStyle: { color: '#4f46e5' },\n      emphasis: {\n        focus: 'series',\n        itemStyle: { color: '#3730a3' }\n      },\n      data: users\n    }\n  ]\n};\n\nchart.setOption(option);\n\nconst resizeObserver = new ResizeObserver(() => {\n  chart.resize();\n});\nresizeObserver.observe(container);",
-  data: MOCK_DATASETS.growth,
+  html: `
+    <div class="p-6 bg-zinc-50 border border-zinc-200 rounded-2xl shadow-sm font-sans text-zinc-900">
+      <div class="flex items-center gap-2 mb-4 text-zinc-500">
+        <i data-lucide="info" class="w-4 h-4"></i>
+        <span class="text-xs font-semibold uppercase tracking-wider">System Ready</span>
+      </div>
+      <h2 class="text-xl font-bold mb-2">Select a scenario to begin</h2>
+      <p class="text-sm text-zinc-600">The AI will analyze data and decide the theme (Blue vs Red) based on growth and context.</p>
+    </div>
+  `,
+  js: "if (window.lucide) { window.lucide.createIcons({ root: shadow }); }",
+  data: {}
 }
 
 const TestPage = () => {
-  const [prompt, setPrompt] = useState(
-    'A KPI card showing total sales trend with a green badge.'
-  )
-  const [dataKey, setDataKey] = useState<string>('sales')
+  const [scenario, setScenario] = useState<keyof typeof INSIGHT_SCENARIOS>('normal')
   const [spec, setSpec] = useState<GenComponentSpec>(INITIAL_SPEC)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return
-
     setIsLoading(true)
     setError(null)
+    
+    const currentData = INSIGHT_SCENARIOS[scenario].data
+
+    // --- Step 2: Construct Chain-of-Thought Prompt ---
+    const cotPrompt = `
+Analyze the following data context and values: 
+${JSON.stringify(currentData)}
+
+1. Calculate the growth rate between start and end.
+2. Determine the sentiment: 
+   - IF growth > 50% AND context is 'Compliance Issues' -> sentiment is 'Critical'.
+   - ELSE -> sentiment is 'Neutral'.
+3. Generate a UI Component (HTML/JS) based on the sentiment:
+   - If Critical: Use a Red Warning theme (bg-red-50, text-red-900, border-red-200). Add a 'alert-triangle' icon.
+   - If Neutral: Use a Blue/Zinc Info theme (bg-blue-50, text-blue-900, border-blue-200). Add an 'info' icon.
+4. Chart: Render a smooth area chart of the 'values'.
+5. Title: Create a punchy title based on the insight (e.g., "Critical Issue Spike" or "Steady User Growth").
+`
+
     try {
       if (!window.electronAPI?.generateUI) {
-        throw new Error('API not available. Are you in Electron?')
+        throw new Error('API not available.')
       }
 
-      const currentData = MOCK_DATASETS[dataKey]
-      const result = await window.electronAPI.generateUI(prompt, currentData)
+      const result = await window.electronAPI.generateUI(cotPrompt, [currentData])
 
       if (result.success && result.data) {
         setSpec({
           html: result.data.spec.html,
           js: result.data.spec.js,
-          data: currentData, // Inject current data
+          data: [currentData], // Wrap in array to match AI's data[0] expectation
         })
       } else {
         throw new Error(result.error || 'Unknown error')
@@ -76,110 +82,79 @@ const TestPage = () => {
   }
 
   return (
-    <div className="p-8 bg-zinc-50 min-h-screen font-sans text-zinc-900">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 flex items-center gap-2">
-            <span className="text-indigo-600">🧬</span> Generative UI Workbench
+    <div className="p-8 bg-zinc-100 min-h-screen font-sans text-zinc-900">
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-black tracking-tight text-zinc-900 flex items-center justify-center gap-3">
+            <Zap className="w-8 h-8 text-yellow-500 fill-current" />
+            Insight-Driven GenUI
           </h1>
-          <div className="text-xs font-mono text-zinc-400">v1.4 Spike</div>
+          <p className="text-zinc-500 text-sm">Testing AI's ability to adapt theme and icons based on data semantics.</p>
         </div>
 
-        {/* --- Controls Area --- */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-zinc-200 space-y-4">
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <label className="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
-                User Prompt
-              </label>
-              <textarea
-                value={prompt}
-                onChange={e => setPrompt(e.target.value)}
-                className="w-full h-24 p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none"
-                placeholder="Describe the component..."
-              />
-            </div>
-
-            <div className="w-64 flex flex-col gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1">
-                  <Database className="w-3 h-3" /> Data Source
-                </label>
-                <div className="flex flex-col gap-1">
-                  {Object.keys(MOCK_DATASETS).map(key => (
-                    <button
-                      key={key}
-                      onClick={() => setDataKey(key)}
-                      className={`px-3 py-2 text-sm text-left rounded-md transition-colors ${
-                        dataKey === key
-                          ? 'bg-indigo-50 text-indigo-700 font-medium'
-                          : 'hover:bg-zinc-100 text-zinc-600'
-                      }`}
-                    >
-                      {key.charAt(0).toUpperCase() + key.slice(1)} Data
-                    </button>
-                  ))}
-                </div>
+        {/* Scenario Selector */}
+        <div className="grid grid-cols-2 gap-4">
+          {(Object.entries(INSIGHT_SCENARIOS) as [keyof typeof INSIGHT_SCENARIOS, any][]).map(([key, item]) => (
+            <button
+              key={key}
+              onClick={() => setScenario(key)}
+              className={`p-6 rounded-2xl border-2 transition-all text-left space-y-2 ${ 
+                scenario === key 
+                  ? 'bg-white border-indigo-600 shadow-xl scale-[1.02]' 
+                  : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300 opacity-60 hover:opacity-100'
+              }`}
+            >
+              <div className="flex justify-between items-center">
+                <span className={`text-xs font-black uppercase tracking-widest ${scenario === key ? 'text-indigo-600' : 'text-zinc-400'}`}>
+                  Scenario: {key}
+                </span>
+                {key === 'surge' ? <AlertCircle className="w-4 h-4 text-red-500" /> : <Info className="w-4 h-4 text-blue-500" />}
               </div>
+              <h3 className="font-bold text-lg">{item.label}</h3>
+              <div className="text-xs font-mono text-zinc-400 truncate">
+                {JSON.stringify(item.data)}
+              </div>
+            </button>
+          ))}
+        </div>
 
-              <button
-                onClick={handleGenerate}
-                disabled={isLoading}
-                className={`flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-semibold text-white transition-all ${
-                  isLoading
-                    ? 'bg-zinc-400 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-md hover:shadow-lg'
-                }`}
-              >
-                {isLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Play className="w-5 h-5 fill-current" />
-                )}
-                {isLoading ? 'Generating...' : 'Generate Component'}
-              </button>
-            </div>
-          </div>
+        <div className="flex justify-center">
+          <button
+            onClick={handleGenerate}
+            disabled={isLoading}
+            className={`group relative flex items-center justify-center gap-3 py-4 px-12 rounded-full font-black text-white transition-all overflow-hidden ${ 
+              isLoading ? 'bg-zinc-400' : 'bg-zinc-900 hover:bg-black shadow-2xl hover:-translate-y-1'
+            }`}
+          >
+            {isLoading ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Play className="w-5 h-5 fill-current group-hover:scale-110 transition-transform" />
+            )}
+            {isLoading ? 'ANALYZING DATA...' : 'GENERATE INSIGHT CARD'}
+          </button>
         </div>
 
         {error && (
-          <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg text-sm border border-red-200">
-            <strong>Error:</strong> {error}
+          <div className="bg-red-100 text-red-700 p-4 rounded-xl text-xs font-mono border border-red-200">
+            {error}
           </div>
         )}
 
-        {/* --- Results Area --- */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[600px]">
-          {/* Left: Render Preview */}
-          <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-zinc-200 overflow-hidden">
-            <div className="bg-zinc-50 border-b border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider flex justify-between items-center">
-              <span>Preview</span>
-              <span className="bg-zinc-200 px-1.5 py-0.5 rounded text-[10px]">Shadow DOM</span>
-            </div>
-            <div className="flex-1 p-8 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] flex items-center justify-center overflow-auto">
-              {/* The Widget */}
-              <div className="w-full max-w-sm">
-                <ShadowWidget spec={spec} />
-              </div>
-            </div>
+        {/* Results */}
+        <div className="flex justify-center">
+          <div className="w-full max-w-md">
+            <ShadowWidget spec={spec} />
           </div>
+        </div>
 
-          {/* Right: Code Inspector */}
-          <div className="flex flex-col h-full bg-zinc-900 rounded-xl shadow-sm border border-zinc-800 overflow-hidden text-zinc-100">
-            <div className="bg-zinc-800/50 border-b border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-              <Code className="w-3 h-3" /> Source Payload
-            </div>
-            <div className="flex-1 overflow-auto p-4 font-mono text-xs">
-              <div className="mb-4">
-                <span className="text-zinc-500 block mb-1">// HTML Structure</span>
-                <pre className="text-emerald-400 whitespace-pre-wrap">{spec.html}</pre>
-              </div>
-              <div>
-                <span className="text-zinc-500 block mb-1">// Render Logic (JS)</span>
-                <pre className="text-blue-400 whitespace-pre-wrap">{spec.js}</pre>
-              </div>
-            </div>
+        <div className="bg-zinc-900 rounded-2xl p-6 text-zinc-400 font-mono text-[10px] overflow-auto max-h-48">
+          <div className="flex items-center gap-2 mb-2 text-zinc-500 border-b border-zinc-800 pb-2">
+            <Zap className="w-3 h-3" /> CURRENT AI PROMPT STRATEGY (CHAIN-OF-THOUGHT)
           </div>
+          <pre className="whitespace-pre-wrap">
+            {`1. Analyze Growth\n2. Determine Sentiment (Critical if Issues + Surge)\n3. Theme Mapping (Red vs Blue)\n4. Render UI`}
+          </pre>
         </div>
       </div>
     </div>

@@ -4,14 +4,15 @@ export const GEN_UI_SYSTEM_PROMPT = `
 * You are inside a 'ShadowRoot'.
 * 'Tailwind CSS' is available.
 * 'echarts' global object is available.
-* 'data' variable is available (Array of objects).
+* **Data**: The data is passed as the second argument: \`__inputData__\`. You MUST start your code with: \`const data = __inputData__;\` to avoid naming conflicts.
 * 'root' variable is the container HTMLElement.
 * **Icons**: 'Lucide Icons' are available. Use the syntax: \`<i data-lucide="icon-name" class="w-4 h-4"></i>\`. Note: The renderer will automatically call createIcons() after your script runs.
 
 
 3. **Constraints**:
 * **HTML**: Use '<div class="...">'. Minimal nesting. No '<body>' or '<html>' tags.
-* **JS**: Write only the *function body*.
+* **JS**: Write only the *function body*. 
+* **STRICT RULE**: Output ONLY plain JavaScript. **STRICTLY FORBID** TypeScript syntax, such as type assertions ('as ...'), interfaces, or type annotations.
 * DO NOT use 'document.getElementById' (it won't find shadow elements).
 * USE 'root.querySelector(...)'.
 * Initialize chart on a div found inside 'root'.
