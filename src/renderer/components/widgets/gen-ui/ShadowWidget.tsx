@@ -1,18 +1,15 @@
 import React, { useRef, useEffect } from 'react'
+import { GenUIPayload } from '@shared/schemas/gen-ui'
 import * as echarts from 'echarts'
 
-export interface GenComponentSpec {
-  html: string
-  js: string
-  data: any
-}
-
 interface ShadowWidgetProps {
-  spec: GenComponentSpec
-  className?: string
+  payload: GenUIPayload
+  width: number | string
+  height: number | string
+  data?: any
 }
 
-const ShadowWidget: React.FC<ShadowWidgetProps> = ({ spec, className }) => {
+const ShadowWidget: React.FC<ShadowWidgetProps> = ({ payload, width, height, data }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const shadowRootRef = useRef<ShadowRoot | null>(null)
   const chartInstancesRef = useRef<echarts.ECharts[]>([])
@@ -33,37 +30,34 @@ const ShadowWidget: React.FC<ShadowWidgetProps> = ({ spec, className }) => {
       chartInstancesRef.current = []
       observersRef.current.forEach(obs => obs.disconnect())
       observersRef.current = []
-      // 清理全局变量，防止污染
-      if ((window as any).__WANSAN_DATA__) delete (window as any).__WANSAN_DATA__
     }
     cleanup()
 
+    // 1. Reset structure
     shadow.innerHTML = ''
-
-    // 1. 注入强制样式
+    
+    // 2. Styles
     const style = document.createElement('style')
     style.textContent = `
-      :host { display: block; width: 100%; }
-      #chart-container { min-height: 200px; width: 100%; display: block; }
+      :host { display: block; width: 100%; height: 100%; }
+      #chart-container { 
+        min-height: 250px; 
+        width: 100%; 
+        display: block !important;
+        background: rgba(0,0,0,0.02);
+      }
+      @import "https://cdn.tailwindcss.com";
     `
     shadow.appendChild(style)
 
-    // 2. 注入库
-    const injectLib = (src: string, id: string) => {
-      const s = document.createElement('script')
-      s.src = src; s.id = id; s.async = false
-      shadow.appendChild(s)
-    }
-    injectLib('https://cdn.tailwindcss.com', 'tw-cdn')
-    injectLib('https://unpkg.com/lucide@latest', 'lucide-cdn')
-    
-    // 3. 注入 HTML
+    // 3. HTML
     const contentWrapper = document.createElement('div')
     contentWrapper.style.width = '100%'
-    contentWrapper.innerHTML = spec.html
+    contentWrapper.style.height = '100%'
+    contentWrapper.innerHTML = payload.html
     shadow.appendChild(contentWrapper)
 
-    // 4. 执行逻辑
+    // 4. Sandbox Execution
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = requestAnimationFrame(() => {
         try {
@@ -89,37 +83,50 @@ const ShadowWidget: React.FC<ShadowWidgetProps> = ({ spec, className }) => {
             }
           }
 
-          // 将数据挂载到全局，方便 AI 访问 (兼容 window.data 的写法)
-          ;(window as any).__WANSAN_DATA__ = spec.data
-          // 在沙箱内提供 data 变量名，但使用 arguments 访问以避免声明冲突
-          const env = { echarts: trackedEcharts }
+          const env = { 
+            echarts: trackedEcharts, 
+            ResizeObserver: TrackedResizeObserver,
+            createIcons 
+          }
+
+          const proxyWindow = new Proxy(window, {
+            get(target, prop) {
+              if (prop === 'echarts') return trackedEcharts
+              if (prop === 'data') return data
+              return (target as any)[prop]
+            }
+          })
           
-          // 我们不再在参数列表中使用 'data' 这个名字
           const renderFunc = new Function(
             'root', 
             '__inputData__', 
+            'env', 
             'echarts', 
             'ResizeObserver', 
-            'env', 
             'createIcons', 
-            spec.js
+            'window',
+            payload.js
           )
           
-          // 执行。如果 AI 代码里写了 const data = ..., 它会正常声明局部变量。
-          // 如果它没写直接用 data, 我们在 Prompt 里告诉它 data 等于 __inputData__。
-          renderFunc(shadow, spec.data, trackedEcharts, TrackedResizeObserver, env, createIcons)
+          renderFunc(shadow, data, env, trackedEcharts, TrackedResizeObserver, createIcons, proxyWindow)
           createIcons()
           
         } catch (err: any) {
-          console.error('ShadowWidget Execution Error:', err)
+          console.error('[ShadowWidget] Runtime Error:', err)
         }
       })
     })
 
     return cleanup
-  }, [spec])
+  }, [payload, data, width, height])
 
-  return <div ref={containerRef} className={className} />
+  return (
+    <div 
+      ref={containerRef} 
+      style={{ width: width || '100%', height: height || '100%' }}
+      className="wansan-shadow-widget-container" 
+    />
+  )
 }
 
 export default ShadowWidget

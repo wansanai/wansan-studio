@@ -8,6 +8,8 @@ import { Lightbulb } from 'lucide-react'
 import { DataTable } from '../base/DataTable'
 import { useTranslation } from 'react-i18next'
 import { getDisplayMode } from '@/utils/viz-logic'
+import ShadowWidget from '../../widgets/gen-ui/ShadowWidget'
+import { GenUIPayload } from '@shared/schemas/gen-ui'
 
 interface VizRendererProps {
   title: string
@@ -23,6 +25,7 @@ interface VizRendererProps {
     | 'scatter'
     | 'kpi'
     | 'text'
+    | 'gen-ui'
   chartTitle?: string
   tableData?: Array<Record<string, any>>
   columnFields?: Array<{ name: string; type: string }>
@@ -33,6 +36,7 @@ interface VizRendererProps {
     y_axis?: string | string[] | null
     series_name?: string | string[]
   }
+  genSpec?: GenUIPayload
   timestamp?: number
   className?: string
   variant?: 'chat' | 'dashboard'
@@ -52,6 +56,7 @@ const VizRendererBase = ({
   columns = [],
   columnTypes = {},
   vizConfig,
+  genSpec,
   className,
   variant = 'chat',
   onTitleChange,
@@ -116,7 +121,16 @@ const VizRendererBase = ({
         />
 
         <div className="flex-1 min-h-0 w-full mb-0 p-2">
-          {displayMode === 'chart' && (
+          {chartType === 'gen-ui' && genSpec && (
+            <ShadowWidget
+              payload={genSpec}
+              data={tableData}
+              width={0} // Auto
+              height={0} // Auto
+            />
+          )}
+
+          {displayMode === 'chart' && chartType !== 'gen-ui' && (
             <VizChart
               type={chartType}
               title={chartTitle}
@@ -181,7 +195,18 @@ const VizRendererBase = ({
           </div>
         )}
 
-        {displayMode === 'chart' && (
+        {chartType === 'gen-ui' && genSpec && (
+          <div className="w-full pb-4 pt-2 min-h-[300px]">
+            <ShadowWidget
+              payload={genSpec}
+              data={tableData}
+              width={0}
+              height={0}
+            />
+          </div>
+        )}
+
+        {displayMode === 'chart' && chartType !== 'gen-ui' && (
           <div className="h-[250px] w-full pb-4 pt-2">
             <VizChart
               type={chartType}

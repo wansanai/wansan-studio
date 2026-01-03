@@ -2,7 +2,16 @@ import { useMemo } from 'react'
 import type { EChartsOption } from 'echarts'
 
 interface UseChartOptionProps {
-  type?: 'bar' | 'line' | 'pie' | 'area' | 'table' | 'scatter' | 'kpi' | 'text'
+  type?:
+    | 'bar'
+    | 'line'
+    | 'pie'
+    | 'area'
+    | 'table'
+    | 'scatter'
+    | 'kpi'
+    | 'text'
+    | 'gen-ui'
   data?: Array<Record<string, any>>
   config?: {
     x_axis?: string | null

@@ -17,7 +17,7 @@ import {
   AskAIResponse,
   AnalyzeContextResponse,
 } from './api-types'
-import { GenUIResponse } from './gen-ui-types'
+import { GenUIResponse } from './schemas/gen-ui'
 
 export interface IngestPreCheckParams {
   filePath: string

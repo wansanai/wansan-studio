@@ -17,7 +17,7 @@ import type {
   AIConfig,
   DomainRule,
 } from '@shared/types.ts'
-import type { GenUIResponse } from '@shared/gen-ui-types'
+import type { GenUIResponse } from '@shared/schemas/gen-ui'
 
 // --- Security Config (Must match obfuscate-tool.js) ---
 const MASTER_SALT = 'wansan-studio-2025-special-security-salt'

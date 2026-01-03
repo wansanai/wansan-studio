@@ -4,7 +4,7 @@ export const GEN_UI_SYSTEM_PROMPT = `
 * You are inside a 'ShadowRoot'.
 * 'Tailwind CSS' is available.
 * 'echarts' global object is available.
-* **Data**: The data is passed as the second argument: \`__inputData__\`. You MUST start your code with: \`const data = __inputData__;\` to avoid naming conflicts.
+* **Data**: The data is passed as the second argument: \`__inputData__\`. It is ALWAYS an **Array of Objects** (representing database rows). You MUST start your code with: \`const data = __inputData__;\` to avoid naming conflicts.
 * 'root' variable is the container HTMLElement.
 * **Icons**: 'Lucide Icons' are available. Use the syntax: \`<i data-lucide="icon-name" class="w-4 h-4"></i>\`. Note: The renderer will automatically call createIcons() after your script runs.
 

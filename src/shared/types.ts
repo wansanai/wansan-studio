@@ -50,6 +50,7 @@ export interface AIAnalysisResult {
     | 'kpi'
     | 'area'
     | 'text'
+    | 'gen-ui'
   viz_config?: {
     x_axis?: string | null
     y_axis?: string | string[] | null

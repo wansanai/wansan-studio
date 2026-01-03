@@ -16,13 +16,14 @@ type VizType =
   | 'area'
   | 'kpi'
   | 'text'
+  | 'gen-ui'
 
 /**
  * Categorizes chart types into groups for conversion logic
  */
 function getChartCategory(
   type: VizType
-): 'cartesian' | 'radial' | 'tabular' | 'kpi' | 'text' {
+): 'cartesian' | 'radial' | 'tabular' | 'kpi' | 'text' | 'gen-ui' {
   const cartesianTypes = ['bar', 'line', 'area', 'scatter']
   const radialTypes = ['pie']
   const tabularTypes = ['table']
@@ -33,6 +34,7 @@ function getChartCategory(
   if (tabularTypes.includes(type)) return 'tabular'
   if (kpiTypes.includes(type)) return 'kpi'
   if (type === 'text') return 'text'
+  if (type === 'gen-ui') return 'gen-ui'
 
   return 'cartesian' // default
 }

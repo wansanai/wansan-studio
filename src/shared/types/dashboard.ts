@@ -1,4 +1,5 @@
 import type { Layout } from 'react-grid-layout'
+import { GenUIPayload } from '../schemas/gen-ui'
 
 export interface ReportData {
   title: string
@@ -18,6 +19,7 @@ export interface ReportData {
     | 'scatter'
     | 'kpi'
     | 'text'
+    | 'gen-ui'
   chartTitle?: string
   tableData?: Array<Record<string, any>>
   columnFields?: Array<{ name: string; type: string }>
@@ -28,6 +30,7 @@ export interface ReportData {
     y_axis?: string | string[] | null
     series_name?: string | string[]
   }
+  genSpec?: GenUIPayload
   timestamp?: number
   is_template?: boolean
   missing_params?: any[]

@@ -11,7 +11,7 @@ import {
 } from '../stores/useSettingsStore'
 import { useTranslation } from 'react-i18next'
 import legacyData from '@shared/legacy-data.ts'
-import TestPage from './gen-ui/TestPage'
+import TestPage from './widgets/gen-ui/TestPage'
 import { X } from 'lucide-react'
 
 interface LogEntry {

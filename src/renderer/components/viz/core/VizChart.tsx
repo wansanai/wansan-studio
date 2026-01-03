@@ -7,7 +7,16 @@ import { useChatStore } from '../../../stores/useChatStore'
 import { useChartOption } from '../../../hooks/useChartOption'
 
 interface VizChartProps {
-  type?: 'bar' | 'line' | 'pie' | 'area' | 'table' | 'scatter' | 'kpi' | 'text'
+  type?:
+    | 'bar'
+    | 'line'
+    | 'pie'
+    | 'area'
+    | 'table'
+    | 'scatter'
+    | 'kpi'
+    | 'text'
+    | 'gen-ui'
   title?: string
   data?: Array<Record<string, any>>
   config?: {
