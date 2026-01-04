@@ -1,11 +1,10 @@
-import { app } from 'electron'
+import { app, UtilityProcess, utilityProcess } from 'electron'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { fork, ChildProcess } from 'child_process'
 
 // --- MAIN PROCESS DEBUG LOGGER ---
 const MAIN_LOG_FILE = path.join(os.tmpdir(), 'wansan-main-db-client.log')
@@ -20,7 +19,7 @@ function logMain(msg: string) {
 // --------------------------------
 
 export class NativeDBClient {
-  private child: ChildProcess | null = null
+  private child: UtilityProcess | null = null
   private pendingRequests = new Map<
     string,
     {
@@ -74,14 +73,13 @@ export class NativeDBClient {
         logMain(`[Init] Entry Path: ${entryPath}`)
 
         if (!this.child) {
-          console.log(`[DB-Client] Spawning Node Child Process...`)
-          logMain(`[Init] Spawning Node Child Process...`)
+          console.log(`[DB-Client] Spawning Utility Process...`)
+          logMain(`[Init] Spawning Utility Process...`)
           
-          // Use standard Node.js fork. This bypasses Electron's utilityProcess complexities.
-          // By default, fork() in Electron uses ELECTRON_RUN_AS_NODE=1 automatically if pointing to a JS file.
-          this.child = fork(entryPath, [], {
-            stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+          // Use 'pipe' to avoid EBADF on Windows GUI apps
+          this.child = utilityProcess.fork(entryPath, [], {
+            serviceName: 'Wansan-DB-Service',
+            stdio: 'pipe',
           })
 
           // Pipe child logs to main process console
@@ -115,7 +113,7 @@ export class NativeDBClient {
           })
 
           this.child.on('exit', code => {
-            const msg = `[DB-Client] Child Process exited with code: ${code}`
+            const msg = `[DB-Client] Utility Process exited with code: ${code}`
             console.error(msg)
             logMain(msg)
             
@@ -174,7 +172,7 @@ export class NativeDBClient {
         reject,
         returnFull: true,
       } as any)
-      this.child?.send({ reqId, type, payload } as DBRequest)
+      this.child?.postMessage({ reqId, type, payload } as DBRequest)
     })
   }
 

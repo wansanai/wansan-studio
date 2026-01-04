@@ -40,8 +40,6 @@ let messageQueue: Promise<void> = Promise.resolve()
 function sendToParent(msg: DBResponse) {
   if (process.parentPort) {
     process.parentPort.postMessage(msg)
-  } else if (process.send) {
-    process.send(msg)
   }
 }
 
@@ -277,13 +275,8 @@ if (process.parentPort) {
     logToFile(`Received message: ${e.data.type}`)
     handleMessage(e.data)
   })
-} else if (process.on) {
-  process.on('message', (msg: DBRequest) => {
-    logToFile(`Received message (child_process): ${msg.type}`)
-    handleMessage(msg)
-  })
 } else {
-  logToFile('[Warning] No parentPort or process.on detected!')
+  logToFile('[Warning] No parentPort detected!')
 }
 
 console.log('[DB-Service] Utility Process Entry Ready')
