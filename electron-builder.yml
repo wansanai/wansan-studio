@@ -28,6 +28,7 @@ win:
     - nsis
     - portable  # [ADD THIS] Generates a standalone .exe
   icon: resources/icon.ico
+  requestedExecutionLevel: requireAdministrator
 
 nsis:
   oneClick: false
