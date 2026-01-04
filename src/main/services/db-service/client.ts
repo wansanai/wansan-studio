@@ -77,7 +77,11 @@ export class NativeDBClient {
           
           this.child = fork(entryPath, [], {
             stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+            env: { 
+              ...process.env, 
+              ELECTRON_RUN_AS_NODE: '1',
+              ELECTRON_NO_ASAR: '1' // CRITICAL: Disable Electron's fs/dlopen patches to avoid "Access is denied" on Windows
+            }
           })
 
           // Pipe child logs to main process console
