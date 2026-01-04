@@ -7,7 +7,27 @@ import path from 'path'
 import os from 'os'
 
 // --- DEBUG LOGGER START ---
-// ... (existing logging code)
+let currentLogPath = path.join(os.tmpdir(), 'wansan-db-worker.log')
+
+function logToFile(msg: string) {
+  try {
+    const time = new Date().toISOString()
+    fs.appendFileSync(currentLogPath, `[${time}] ${msg}\n`)
+  } catch (e) {
+    // ignore
+  }
+}
+
+logToFile('==============================================')
+logToFile(`DB Worker Starting... PID: ${process.pid}`)
+logToFile(`Node Version: ${process.version}`)
+logToFile(`CWD: ${process.cwd()}`)
+
+try {
+  logToFile('Attempting to check dependencies...')
+} catch (e: any) {
+  logToFile(`Dependency Check Error: ${e.message}`)
+}
 // --- DEBUG LOGGER END ---
 
 let DuckDBInstance: any = null
