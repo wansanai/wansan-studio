@@ -13,7 +13,6 @@ files:
 
 # [CRITICAL] Unpack Native modules to avoid ASAR issues
 asarUnpack:
-  - "node_modules/@duckdb/**/*"
   - "dist/main/services/db-service/**/*"
 
 mac:

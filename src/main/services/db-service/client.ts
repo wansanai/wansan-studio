@@ -1,10 +1,11 @@
-import { app, UtilityProcess, utilityProcess } from 'electron'
+import { app } from 'electron'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { fork, ChildProcess } from 'child_process'
 
 // --- MAIN PROCESS DEBUG LOGGER ---
 const MAIN_LOG_FILE = path.join(os.tmpdir(), 'wansan-main-db-client.log')
@@ -19,7 +20,7 @@ function logMain(msg: string) {
 // --------------------------------
 
 export class NativeDBClient {
-  private child: UtilityProcess | null = null
+  private child: ChildProcess | null = null
   private pendingRequests = new Map<
     string,
     {
@@ -54,23 +55,29 @@ export class NativeDBClient {
 
     this.initPromise = (async () => {
       try {
-        // Use standard ASAR path. Electron should handle the redirection to unpacked files automatically
-        // if asarUnpack is configured correctly.
-        const entryPath = join(
-          app.getAppPath(),
-          'dist/main/services/db-service/entry.cjs'
-        )
+        let entryPath: string
+        if (app.isPackaged) {
+          // We kept db-service unpacked, so construct the path manually.
+          entryPath = join(
+            app.getAppPath() + '.unpacked',
+            'dist/main/services/db-service/entry.cjs'
+          )
+        } else {
+          entryPath = join(
+            app.getAppPath(),
+            'dist/main/services/db-service/entry.cjs'
+          )
+        }
         
         logMain(`[Init] Entry Path: ${entryPath}`)
 
         if (!this.child) {
-          console.log(`[DB-Client] Spawning Utility Process...`)
-          logMain(`[Init] Spawning Utility Process...`)
+          console.log(`[DB-Client] Spawning Node Child Process...`)
+          logMain(`[Init] Spawning Node Child Process...`)
           
-          // Use 'pipe' to avoid EBADF on Windows GUI apps
-          this.child = utilityProcess.fork(entryPath, [], {
-            serviceName: 'Wansan-DB-Service',
-            stdio: 'pipe',
+          this.child = fork(entryPath, [], {
+            stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
           })
 
           // Pipe child logs to main process console
@@ -104,7 +111,7 @@ export class NativeDBClient {
           })
 
           this.child.on('exit', code => {
-            const msg = `[DB-Client] Utility Process exited with code: ${code}`
+            const msg = `[DB-Client] Child Process exited with code: ${code}`
             console.error(msg)
             logMain(msg)
             
@@ -163,7 +170,7 @@ export class NativeDBClient {
         reject,
         returnFull: true,
       } as any)
-      this.child?.postMessage({ reqId, type, payload } as DBRequest)
+      this.child?.send({ reqId, type, payload } as DBRequest)
     })
   }
 
