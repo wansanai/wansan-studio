@@ -59,15 +59,60 @@ async function loadDuckDB() {
   if (DuckDBClass) return DuckDBClass;
   try {
     log('[DB-Worker] Loading @duckdb/node-api...')
-    // Use Function to bypass webpack/bundler static analysis if needed, 
+
+    // [Windows Fix] Try to locate the .node file and check its status
+    // This helps diagnose if it's a path length issue or permission issue
+    // We also set CWD to the parent of the entry script to help DLL resolution
+    try {
+        const scriptDir = path.dirname(__filename);
+        process.chdir(scriptDir);
+        log(`[DB-Worker] Changed CWD to: ${scriptDir}`);
+    } catch (err) {
+        logError('[DB-Worker] Failed to change CWD', err);
+    }
+
+    // Use Function to bypass webpack/bundler static analysis if needed,
     // but standard dynamic import() is usually sufficient and safer for types.
     // However, in CJS output, import() returns a Promise resolving to the module.
     const module = await import('@duckdb/node-api');
     DuckDBClass = module.DuckDBInstance;
     log('[DB-Worker] @duckdb/node-api loaded successfully')
     return DuckDBClass;
-  } catch (e) {
+  } catch (e: any) {
     logError('[DB-Worker] Failed to load @duckdb/node-api', e);
+
+    // [Diagnostic] Check if file exists at the reported path
+    if (e.message && e.message.includes('Access is denied') && e.message.includes('\\\\?\\')) {
+        const match = e.message.match(/\\\\.*?\.node/);
+        if (match) {
+            const nodePath = match[0];
+            log(`[DB-Worker] Diagnosing path: ${nodePath}`);
+            try {
+                // Remove \\?\ prefix for fs operations if needed, though Node usually handles it
+                const fsPath = nodePath.replace(/^\\\\\?\\/, '');
+                if (fs.existsSync(fsPath)) {
+                    log('[DB-Worker] File exists on disk.');
+                    try {
+                        const stats = fs.statSync(fsPath);
+                        log('[DB-Worker] File stats:', stats);
+                        try {
+                           fs.accessSync(fsPath, fs.constants.R_OK | fs.constants.X_OK);
+                           log('[DB-Worker] File is readable and executable.');
+                        } catch (accessErr) {
+                           logError('[DB-Worker] File permission check failed', accessErr);
+                        }
+                    } catch (statErr) {
+                         logError('[DB-Worker] Failed to stat file', statErr);
+                    }
+                } else {
+                    log('[DB-Worker] File DOES NOT exist at path.');
+                }
+            } catch (diagErr) {
+                logError('[DB-Worker] Diagnostic check failed', diagErr);
+            }
+        }
+    }
+
     throw e;
   }
 }
@@ -83,7 +128,7 @@ async function handleMessage(msg: DBRequest) {
   messageQueue = messageQueue.then(async () => {
     try {
       log(`Processing message: ${type}`, { reqId })
-      
+
       switch (type) {
         case 'CONNECT': {
           if (connection) {
@@ -100,17 +145,17 @@ async function handleMessage(msg: DBRequest) {
 
           const dbPath = payload?.path || ':memory:'
           log(`[DB-Worker] Connecting to ${dbPath}...`)
-          
+
           try {
             const DuckDB = await loadDuckDB();
             if (!DuckDB) throw new Error('DuckDB Class not loaded');
 
             db = await DuckDB.create(dbPath)
             log('[DB-Worker] DB Instance created')
-            
+
             connection = await db.connect()
             log('[DB-Worker] Connection established')
-            
+
             process.parentPort?.postMessage({
               reqId,
               success: true,
