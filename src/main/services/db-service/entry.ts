@@ -2,6 +2,55 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import { sanitizeValue } from '../../../shared/serialization'
 import { normalizeDuckDBType } from '../../../shared/type-utils'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
+
+// --- Logging Setup ---
+const LOG_FILE = path.join(os.tmpdir(), 'wansan-db-worker.log')
+
+function log(msg: string, ...args: any[]) {
+  const timestamp = new Date().toISOString()
+  const text = `[${timestamp}] ${msg} ${args.length ? JSON.stringify(args, null, 2) : ''}\n`
+  try {
+    fs.appendFileSync(LOG_FILE, text)
+  } catch (e) {
+    // ignore
+  }
+  console.log(msg, ...args)
+}
+
+function logError(msg: string, err: any) {
+  const timestamp = new Date().toISOString()
+  const errorDetails = err instanceof Error ? err.stack : JSON.stringify(err)
+  const text = `[${timestamp}] [ERROR] ${msg}\n${errorDetails}\n`
+  try {
+    fs.appendFileSync(LOG_FILE, text)
+  } catch (e) {
+    // ignore
+  }
+  console.error(msg, err)
+}
+
+// Global handlers to catch crash-inducing errors
+process.on('uncaughtException', (err) => {
+  logError('Uncaught Exception', err)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  logError('Unhandled Rejection', reason)
+})
+
+log('----------------------------------------')
+log('DB Worker Process Started')
+log('Environment Info:', {
+  cwd: process.cwd(),
+  execPath: process.execPath,
+  platform: os.platform(),
+  arch: os.arch(),
+  nodeVersion: process.version,
+  pid: process.pid
+})
 
 let db: DuckDBInstance | null = null
 let connection: any = null
@@ -13,6 +62,8 @@ async function handleMessage(msg: DBRequest) {
   // Chain to the queue to ensure sequential processing
   messageQueue = messageQueue.then(async () => {
     try {
+      log(`Processing message: ${type}`, { reqId })
+      
       switch (type) {
         case 'CONNECT': {
           if (connection) {
@@ -21,20 +72,31 @@ async function handleMessage(msg: DBRequest) {
               // Attempt to close if the API supports it, otherwise nullify
               connection = null
               db = null
+              log('Closed previous connection')
             } catch (e) {
-              console.warn('Error closing previous connection:', e)
+              logError('Error closing previous connection:', e)
             }
           }
 
-          const path = payload?.path || ':memory:'
-          console.log(`[DB-Worker] Connecting to ${path}...`)
-          db = await DuckDBInstance.create(path)
-          connection = await db.connect()
-          process.parentPort?.postMessage({
-            reqId,
-            success: true,
-            data: { status: 'Connected', path },
-          } as DBResponse)
+          const dbPath = payload?.path || ':memory:'
+          log(`[DB-Worker] Connecting to ${dbPath}...`)
+          
+          try {
+            db = await DuckDBInstance.create(dbPath)
+            log('[DB-Worker] DB Instance created')
+            
+            connection = await db.connect()
+            log('[DB-Worker] Connection established')
+            
+            process.parentPort?.postMessage({
+              reqId,
+              success: true,
+              data: { status: 'Connected', path: dbPath },
+            } as DBResponse)
+          } catch (connErr) {
+            logError('[DB-Worker] Connection Fatal Error', connErr)
+            throw connErr
+          }
           break
         }
 
@@ -45,6 +107,7 @@ async function handleMessage(msg: DBRequest) {
             )
           }
 
+          // log('Running SQL:', payload.sql) // Optional: might be verbose
           const result = await connection.run(payload.sql)
           const rows = await result.getRowObjectsJS()
 
@@ -140,7 +203,7 @@ async function handleMessage(msg: DBRequest) {
           const isView = tableName.startsWith('v_')
           const dropCmd = isView ? 'DROP VIEW' : 'DROP TABLE'
 
-          await connection.run(`${dropCmd} IF EXISTS "${tableName}"`)
+          await connection.run(`${dropCmd} IF EXISTS "${tableName}"`) 
           process.parentPort?.postMessage({
             reqId,
             success: true,
@@ -154,22 +217,28 @@ async function handleMessage(msg: DBRequest) {
 
           // Ensure path uses forward slashes for DuckDB
           const safePath = filePath.replace(/\\/g, '/')
-          console.log(
+          log(
             `[DB-Worker] Ingesting ${format} from ${safePath} into ${tableName}...`
           )
 
-          if (format === 'csv') {
-            await connection.run(`
-                  CREATE TABLE "${tableName}" AS 
-                  SELECT * FROM read_csv_auto('${safePath}', HEADER=TRUE, auto_detect=true)
-              `)
-          } else if (format === 'json') {
-            await connection.run(`
-                  CREATE TABLE "${tableName}" AS 
-                  SELECT * FROM read_json_auto('${safePath}', format='auto', auto_detect=true)
-              `)
-          } else {
-            throw new Error(`Unsupported ingestion format: ${format}`)
+          try {
+            if (format === 'csv') {
+              await connection.run(`
+                    CREATE TABLE "${tableName}" AS 
+                    SELECT * FROM read_csv_auto('${safePath}', HEADER=TRUE, auto_detect=true)
+                `)
+            } else if (format === 'json') {
+              await connection.run(`
+                    CREATE TABLE "${tableName}" AS 
+                    SELECT * FROM read_json_auto('${safePath}', format='auto', auto_detect=true)
+                `)
+            } else {
+              throw new Error(`Unsupported ingestion format: ${format}`)
+            }
+            log(`[DB-Worker] Ingestion successful for ${tableName}`)
+          } catch (ingestErr) {
+            logError(`[DB-Worker] Ingestion failed for ${tableName}`, ingestErr)
+            throw ingestErr
           }
 
           process.parentPort?.postMessage({
@@ -183,8 +252,9 @@ async function handleMessage(msg: DBRequest) {
           try {
             connection = null
             db = null
+            log('[DB-Worker] Connection closed requested')
           } catch (e) {
-            console.error('Error during close:', e)
+            logError('Error during close:', e)
           }
           process.parentPort?.postMessage({
             reqId,
@@ -195,7 +265,9 @@ async function handleMessage(msg: DBRequest) {
 
         case 'TEST':
         case 'TEST_CONNECTION': {
+          log('[DB-Worker] TEST_CONNECTION received')
           if (!db || !connection) {
+            log('[DB-Worker] Auto-connecting for test...')
             db = await DuckDBInstance.create(':memory:')
             connection = await db.connect()
           }
@@ -215,7 +287,7 @@ async function handleMessage(msg: DBRequest) {
           throw new Error(`Unsupported request type: ${type}`)
       }
     } catch (err: any) {
-      console.error(`[DB-Worker] Error handling ${type}:`, err)
+      logError(`[DB-Worker] Error handling ${type}:`, err)
       process.parentPort?.postMessage({
         reqId,
         success: false,
@@ -229,6 +301,9 @@ if (process.parentPort) {
   process.parentPort.on('message', e => {
     handleMessage(e.data)
   })
+  log('[DB-Service] Listening on parentPort')
+} else {
+  logError('[DB-Service] process.parentPort is undefined!', {})
 }
 
-console.log('[DB-Service] Utility Process Entry Ready')
+log('[DB-Service] Utility Process Entry Ready')

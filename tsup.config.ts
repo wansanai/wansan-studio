@@ -12,7 +12,7 @@ export default defineConfig({
   target: 'node20',
   clean: false, // Don't clean dist, handled by build script or we append to it
   outDir: 'dist',
-  external: ['electron', 'dotenv'],
+  external: ['electron', 'dotenv', '@duckdb/node-api'],
   sourcemap: true,
   shims: true, // 为 ESM 注入 __dirname 等 shim
   dts: false,
