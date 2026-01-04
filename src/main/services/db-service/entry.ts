@@ -64,22 +64,22 @@ async function handleMessage(msg: DBRequest) {
             }
           }
 
-          const path = payload?.path || ':memory:'
-          console.log(`[DB-Worker] Connecting to ${path}...`)
+          const dbPath = payload?.path || ':memory:'
+          console.log(`[DB-Worker] Connecting to ${dbPath}...`)
 
           // Switch log path to project directory if not in memory
-          if (path !== ':memory:') {
-            const projectDir = path.dirname(path)
+          if (dbPath !== ':memory:') {
+            const projectDir = path.dirname(dbPath)
             currentLogPath = path.join(projectDir, 'wansan-db-worker.log')
             logToFile(`Log switched to project directory: ${currentLogPath}`)
           }
 
-          db = await DuckDBInstance.create(path)
+          db = await DuckDBInstance.create(dbPath)
           connection = await db.connect()
           sendToParent({
             reqId,
             success: true,
-            data: { status: 'Connected', path },
+            data: { status: 'Connected', path: dbPath },
           } as DBResponse)
           break
         }
