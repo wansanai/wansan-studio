@@ -54,10 +54,21 @@ export class NativeDBClient {
 
     this.initPromise = (async () => {
       try {
-        const entryPath = join(
-          app.getAppPath(),
-          'dist/main/services/db-service/entry.cjs'
-        )
+        let entryPath: string
+        if (app.isPackaged) {
+          // In production, we unpacked the db-service to avoid ASAR issues.
+          // app.getAppPath() returns '.../resources/app.asar'
+          // We need '.../resources/app.asar.unpacked/dist/main/services/db-service/entry.cjs'
+          entryPath = join(
+            app.getAppPath() + '.unpacked',
+            'dist/main/services/db-service/entry.cjs'
+          )
+        } else {
+          entryPath = join(
+            app.getAppPath(),
+            'dist/main/services/db-service/entry.cjs'
+          )
+        }
         
         logMain(`[Init] Entry Path: ${entryPath}`)
 

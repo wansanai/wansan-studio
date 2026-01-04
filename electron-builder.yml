@@ -14,6 +14,7 @@ files:
 # [CRITICAL] Unpack Native modules to avoid ASAR issues
 asarUnpack:
   - "node_modules/@duckdb/node-api"
+  - "dist/main/services/db-service/**/*"
 
 mac:
   target: dmg
