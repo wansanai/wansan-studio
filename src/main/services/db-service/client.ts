@@ -2,6 +2,21 @@ import { app, UtilityProcess, utilityProcess } from 'electron'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
+
+// --- MAIN PROCESS DEBUG LOGGER ---
+const MAIN_LOG_FILE = path.join(os.tmpdir(), 'wansan-main-db-client.log')
+function logMain(msg: string) {
+  try {
+    const time = new Date().toISOString()
+    fs.appendFileSync(MAIN_LOG_FILE, `[${time}] ${msg}\n`)
+  } catch (e) {
+    // ignore
+  }
+}
+// --------------------------------
 
 export class NativeDBClient {
   private child: UtilityProcess | null = null
@@ -43,9 +58,13 @@ export class NativeDBClient {
           app.getAppPath(),
           'dist/main/services/db-service/entry.cjs'
         )
+        
+        logMain(`[Init] Entry Path: ${entryPath}`)
 
         if (!this.child) {
           console.log(`[DB-Client] Spawning Utility Process...`)
+          logMain(`[Init] Spawning Utility Process...`)
+          
           // Use 'pipe' instead of 'inherit' to avoid EBADF on Windows GUI apps
           this.child = utilityProcess.fork(entryPath, [], {
             serviceName: 'Wansan-DB-Service',
@@ -55,12 +74,18 @@ export class NativeDBClient {
           // Pipe child logs to main process console
           this.child.stdout?.on('data', (data) => {
             const str = data.toString().trim()
-            if (str) console.log(`[DB-Service] ${str}`)
+            if (str) {
+              console.log(`[DB-Service] ${str}`)
+              logMain(`[Child STDOUT] ${str}`)
+            }
           })
           
           this.child.stderr?.on('data', (data) => {
             const str = data.toString().trim()
-            if (str) console.error(`[DB-Service Error] ${str}`)
+            if (str) {
+              console.error(`[DB-Service Error] ${str}`)
+              logMain(`[Child STDERR] ${str}`)
+            }
           })
 
           this.child.on('message', (msg: DBResponse) => {
@@ -77,9 +102,10 @@ export class NativeDBClient {
           })
 
           this.child.on('exit', code => {
-            console.error(
-              `[DB-Client] Utility Process exited with code: ${code}`
-            )
+            const msg = `[DB-Client] Utility Process exited with code: ${code}`
+            console.error(msg)
+            logMain(msg)
+            
             this.child = null
             this.isReady = false
             this.initPromise = null
@@ -95,8 +121,9 @@ export class NativeDBClient {
         console.log(
           `[DB-Client] Native DB Client is ready. (Path: ${initialPath})`
         )
-      } catch (err) {
+      } catch (err: any) {
         console.error(`[DB-Client] Failed to initialize:`, err)
+        logMain(`[Init Error] ${err.message}\n${err.stack}`)
         this.child = null
         this.initPromise = null
         throw err
