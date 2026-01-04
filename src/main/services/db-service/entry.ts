@@ -7,12 +7,12 @@ import path from 'path'
 import os from 'os'
 
 // --- DEBUG LOGGER START ---
-const LOG_FILE = path.join(os.tmpdir(), 'wansan-db-worker.log')
+let currentLogPath = path.join(os.tmpdir(), 'wansan-db-worker.log')
 
 function logToFile(msg: string) {
   try {
     const time = new Date().toISOString()
-    fs.appendFileSync(LOG_FILE, `[${time}] ${msg}\n`)
+    fs.appendFileSync(currentLogPath, `[${time}] ${msg}\n`)
   } catch (e) {
     // ignore
   }
@@ -57,6 +57,14 @@ async function handleMessage(msg: DBRequest) {
 
           const path = payload?.path || ':memory:'
           console.log(`[DB-Worker] Connecting to ${path}...`)
+
+          // Switch log path to project directory if not in memory
+          if (path !== ':memory:') {
+            const projectDir = path.dirname(path)
+            currentLogPath = path.join(projectDir, 'wansan-db-worker.log')
+            logToFile(`Log switched to project directory: ${currentLogPath}`)
+          }
+
           db = await DuckDBInstance.create(path)
           connection = await db.connect()
           process.parentPort?.postMessage({
