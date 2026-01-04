@@ -5,6 +5,7 @@ import { normalizeDuckDBType } from '../../../shared/type-utils'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import Module from 'module'
 
 // --- DEBUG LOGGER START ---
 let currentLogPath = path.join(os.tmpdir(), 'wansan-db-worker.log')
@@ -17,6 +18,75 @@ function logToFile(msg: string) {
     // ignore
   }
 }
+
+// --- DUCKDB LOADER HACK ---
+// On Windows, loading the .node file directly from the app.asar.unpacked directory
+// often fails with "Access is denied" when running in a child process spawned by Electron.
+// We circumvent this by copying the binary to %TEMP% and hijacking the module loader.
+function prepareDuckDBEnvironment() {
+  if (process.platform !== 'win32') return
+
+  try {
+    logToFile('Starting DuckDB Windows loader patch...')
+    
+    // 1. Find the source .node file
+    // The path structure in unpacked directory is predictable
+    const baseDir = path.resolve(__dirname, '../../../../node_modules')
+    // We need to find where @duckdb/node-bindings is. It might be nested or flattened.
+    // Let's try a few common locations.
+    const candidates = [
+      path.join(baseDir, '@duckdb/node-bindings/node_modules/@duckdb/node-bindings-win32-x64/duckdb.node'),
+      path.join(baseDir, '@duckdb/node-bindings-win32-x64/duckdb.node'), // If flattened
+      // Development path fallback
+      path.join(process.cwd(), 'node_modules/@duckdb/node-bindings/node_modules/@duckdb/node-bindings-win32-x64/duckdb.node')
+    ]
+
+    let sourcePath = ''
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        sourcePath = p
+        break
+      }
+    }
+
+    if (!sourcePath) {
+      logToFile('Warning: Could not locate duckdb.node for patching. Standard loading will be attempted.')
+      return
+    }
+
+    logToFile(`Found source binding: ${sourcePath}`)
+
+    // 2. Copy to Temp
+    const tempFileName = `duckdb-native-${process.pid}-${Date.now()}.node`
+    const tempPath = path.join(os.tmpdir(), tempFileName)
+    
+    fs.copyFileSync(sourcePath, tempPath)
+    logToFile(`Copied binding to: ${tempPath}`)
+
+    // 3. Cleanup on exit
+    process.on('exit', () => {
+      try { fs.unlinkSync(tempPath) } catch {}
+    })
+
+    // 4. Hook Module._resolveFilename
+    const originalResolve = (Module as any)._resolveFilename
+    ;(Module as any)._resolveFilename = function(request: string, parent: any, isMain: boolean) {
+      if (request.endsWith('duckdb.node')) {
+        logToFile(`Redirecting load request for duckdb.node to ${tempPath}`)
+        return tempPath
+      }
+      return originalResolve.call(this, request, parent, isMain)
+    }
+    
+    logToFile('Loader patch applied successfully.')
+
+  } catch (e: any) {
+    logToFile(`Loader patch failed: ${e.message}. Proceeding with standard load.`)
+  }
+}
+
+prepareDuckDBEnvironment()
+// --------------------------
 
 logToFile('==============================================')
 logToFile(`DB Worker Starting... PID: ${process.pid}`)
@@ -41,20 +111,6 @@ let messageQueue: Promise<void> = Promise.resolve()
 function ensureDuckDBLoaded() {
   if (DuckDBInstance) return
   
-  logToFile('Checking native binding file state...')
-  try {
-    // Attempt to locate the .node file manually for diagnostics
-    const possibleBindingPath = path.join(__dirname, '../../../../node_modules/@duckdb/node-bindings/node_modules/@duckdb/node-bindings-win32-x64/duckdb.node')
-    if (fs.existsSync(possibleBindingPath)) {
-      const stats = fs.statSync(possibleBindingPath)
-      logToFile(`Diagnostic: Found .node at ${possibleBindingPath}, size: ${stats.size}, mode: ${stats.mode}`)
-    } else {
-      logToFile(`Diagnostic: .node file NOT found at suspected path ${possibleBindingPath}`)
-    }
-  } catch (diagErr: any) {
-    logToFile(`Diagnostic Error: ${diagErr.message}`)
-  }
-
   logToFile('Attempting to require @duckdb/node-api...')
   try {
     const module = require('@duckdb/node-api')
