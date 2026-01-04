@@ -1,4 +1,4 @@
-import { DuckDBInstance } from '@duckdb/node-api'
+// import { DuckDBInstance } from '@duckdb/node-api' // Move to deferred require
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import { sanitizeValue } from '../../../shared/serialization'
 import { normalizeDuckDBType } from '../../../shared/type-utils'
@@ -7,34 +7,45 @@ import path from 'path'
 import os from 'os'
 
 // --- DEBUG LOGGER START ---
-let currentLogPath = path.join(os.tmpdir(), 'wansan-db-worker.log')
-
-function logToFile(msg: string) {
-  try {
-    const time = new Date().toISOString()
-    fs.appendFileSync(currentLogPath, `[${time}] ${msg}\n`)
-  } catch (e) {
-    // ignore
-  }
-}
-
-logToFile('==============================================')
-logToFile(`DB Worker Starting... PID: ${process.pid}`)
-logToFile(`Node Version: ${process.version}`)
-logToFile(`CWD: ${process.cwd()}`)
-
-try {
-  logToFile('Attempting to check dependencies...')
-  // Optional: check if native module can be resolved
-  // logToFile(`DuckDB Module Path: ${require.resolve('@duckdb/node-api')}`)
-} catch (e: any) {
-  logToFile(`Dependency Check Error: ${e.message}`)
-}
+// ... (existing logging code)
 // --- DEBUG LOGGER END ---
 
-let db: DuckDBInstance | null = null
+let DuckDBInstance: any = null
+let db: any = null
 let connection: any = null
 let messageQueue: Promise<void> = Promise.resolve()
+
+/**
+ * Lazy load DuckDB to ensure environment is ready
+ */
+function ensureDuckDBLoaded() {
+  if (DuckDBInstance) return
+  
+  logToFile('Checking native binding file state...')
+  try {
+    // Attempt to locate the .node file manually for diagnostics
+    const possibleBindingPath = path.join(__dirname, '../../../../node_modules/@duckdb/node-bindings/node_modules/@duckdb/node-bindings-win32-x64/duckdb.node')
+    if (fs.existsSync(possibleBindingPath)) {
+      const stats = fs.statSync(possibleBindingPath)
+      logToFile(`Diagnostic: Found .node at ${possibleBindingPath}, size: ${stats.size}, mode: ${stats.mode}`)
+    } else {
+      logToFile(`Diagnostic: .node file NOT found at suspected path ${possibleBindingPath}`)
+    }
+  } catch (diagErr: any) {
+    logToFile(`Diagnostic Error: ${diagErr.message}`)
+  }
+
+  logToFile('Attempting to require @duckdb/node-api...')
+  try {
+    const module = require('@duckdb/node-api')
+    DuckDBInstance = module.DuckDBInstance
+    logToFile('Successfully loaded @duckdb/node-api')
+  } catch (e: any) {
+    logToFile(`CRITICAL: Failed to load @duckdb/node-api: ${e.message}`)
+    if (e.stack) logToFile(`Stack: ${e.stack}`)
+    throw e
+  }
+}
 
 // --- IPC ABSTRACTION ---
 function sendToParent(msg: DBResponse) {
@@ -53,6 +64,7 @@ async function handleMessage(msg: DBRequest) {
     try {
       switch (type) {
         case 'CONNECT': {
+          ensureDuckDBLoaded()
           if (connection) {
             try {
               // In @duckdb/node-api, explicit termination is better
@@ -241,6 +253,7 @@ async function handleMessage(msg: DBRequest) {
 
         case 'TEST':
         case 'TEST_CONNECTION': {
+          ensureDuckDBLoaded()
           if (!db || !connection) {
             db = await DuckDBInstance.create(':memory:')
             connection = await db.connect()
