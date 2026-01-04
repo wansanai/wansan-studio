@@ -54,21 +54,12 @@ export class NativeDBClient {
 
     this.initPromise = (async () => {
       try {
-        let entryPath: string
-        if (app.isPackaged) {
-          // In production, we unpacked the db-service to avoid ASAR issues.
-          // app.getAppPath() returns '.../resources/app.asar'
-          // We need '.../resources/app.asar.unpacked/dist/main/services/db-service/entry.cjs'
-          entryPath = join(
-            app.getAppPath() + '.unpacked',
-            'dist/main/services/db-service/entry.cjs'
-          )
-        } else {
-          entryPath = join(
-            app.getAppPath(),
-            'dist/main/services/db-service/entry.cjs'
-          )
-        }
+        // Use standard ASAR path. Electron should handle the redirection to unpacked files automatically
+        // if asarUnpack is configured correctly.
+        const entryPath = join(
+          app.getAppPath(),
+          'dist/main/services/db-service/entry.cjs'
+        )
         
         logMain(`[Init] Entry Path: ${entryPath}`)
 
