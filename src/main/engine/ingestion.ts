@@ -118,10 +118,12 @@ export async function ingestExcelFile(
   typesParam?: string,
   limitRows?: number
 ): Promise<TableSchema[]> {
-  // Resolve worker path
-  const workerPath = isDev()
-    ? path.join(process.cwd(), 'dist/main/workers/excelWorker.js')
-    : path.join(__dirname, '../workers/excelWorker.js')
+  // Resolve worker path reliably using app.getAppPath()
+  // This works for both Dev (root/dist/...) and Prod (app.asar/dist/...)
+  const workerPath = path.join(
+    app.getAppPath(),
+    'dist/main/workers/excelWorker.js'
+  )
 
   // Use a dedicated subdirectory for temp files
   const tempDir = await TempFileManager.ensureTempDir()
