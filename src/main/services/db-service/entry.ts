@@ -57,8 +57,11 @@ function prepareDuckDBEnvironment() {
     logToFile(`Found source binding: ${sourcePath}`)
 
     // 2. Copy to Temp
+    // Use fs.realpathSync to ensure we have the long path (resolving ADMINI~1 etc)
+    // This helps avoid confusion in Electron's dlopen patch
+    const tempDir = fs.realpathSync(os.tmpdir())
     const tempFileName = `duckdb-native-${process.pid}-${Date.now()}.node`
-    const tempPath = path.join(os.tmpdir(), tempFileName)
+    const tempPath = path.join(tempDir, tempFileName)
     
     fs.copyFileSync(sourcePath, tempPath)
     logToFile(`Copied binding to: ${tempPath}`)
