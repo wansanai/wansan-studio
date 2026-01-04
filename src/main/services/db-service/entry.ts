@@ -2,6 +2,35 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import { sanitizeValue } from '../../../shared/serialization'
 import { normalizeDuckDBType } from '../../../shared/type-utils'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
+
+// --- DEBUG LOGGER START ---
+const LOG_FILE = path.join(os.tmpdir(), 'wansan-db-worker.log')
+
+function logToFile(msg: string) {
+  try {
+    const time = new Date().toISOString()
+    fs.appendFileSync(LOG_FILE, `[${time}] ${msg}\n`)
+  } catch (e) {
+    // ignore
+  }
+}
+
+logToFile('==============================================')
+logToFile(`DB Worker Starting... PID: ${process.pid}`)
+logToFile(`Node Version: ${process.version}`)
+logToFile(`CWD: ${process.cwd()}`)
+
+try {
+  logToFile('Attempting to check dependencies...')
+  // Optional: check if native module can be resolved
+  // logToFile(`DuckDB Module Path: ${require.resolve('@duckdb/node-api')}`)
+} catch (e: any) {
+  logToFile(`Dependency Check Error: ${e.message}`)
+}
+// --- DEBUG LOGGER END ---
 
 let db: DuckDBInstance | null = null
 let connection: any = null
@@ -215,6 +244,7 @@ async function handleMessage(msg: DBRequest) {
           throw new Error(`Unsupported request type: ${type}`)
       }
     } catch (err: any) {
+      logToFile(`[Error] ${type}: ${err.message}\nStack: ${err.stack}`)
       console.error(`[DB-Worker] Error handling ${type}:`, err)
       process.parentPort?.postMessage({
         reqId,
@@ -227,8 +257,12 @@ async function handleMessage(msg: DBRequest) {
 
 if (process.parentPort) {
   process.parentPort.on('message', e => {
+    logToFile(`Received message: ${e.data.type}`)
     handleMessage(e.data)
   })
+} else {
+  logToFile('[Warning] No parentPort detected!')
 }
 
 console.log('[DB-Service] Utility Process Entry Ready')
+logToFile('DB Service Ready and Waiting.')
