@@ -36,6 +36,15 @@ let db: DuckDBInstance | null = null
 let connection: any = null
 let messageQueue: Promise<void> = Promise.resolve()
 
+// --- IPC ABSTRACTION ---
+function sendToParent(msg: DBResponse) {
+  if (process.parentPort) {
+    process.parentPort.postMessage(msg)
+  } else if (process.send) {
+    process.send(msg)
+  }
+}
+
 async function handleMessage(msg: DBRequest) {
   const { reqId, type, payload } = msg
 
@@ -67,7 +76,7 @@ async function handleMessage(msg: DBRequest) {
 
           db = await DuckDBInstance.create(path)
           connection = await db.connect()
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
             data: { status: 'Connected', path },
@@ -95,7 +104,7 @@ async function handleMessage(msg: DBRequest) {
           // CRITICAL: Convert BigInts for JSON serialization
           const serializedRows = sanitizeValue(rows)
 
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
             data: serializedRows,
@@ -107,7 +116,7 @@ async function handleMessage(msg: DBRequest) {
         case 'CHECKPOINT': {
           if (!db || !connection) throw new Error('Not connected')
           await connection.run('CHECKPOINT')
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
           } as DBResponse)
@@ -132,7 +141,7 @@ async function handleMessage(msg: DBRequest) {
               type: normalizeDuckDBType(col.type),
             }))
 
-            process.parentPort?.postMessage({
+            sendToParent({
               reqId,
               success: true,
               data: { tableName, columns },
@@ -161,7 +170,7 @@ async function handleMessage(msg: DBRequest) {
               })
             )
 
-            process.parentPort?.postMessage({
+            sendToParent({
               reqId,
               success: true,
               data: { tables: tablesWithDetails },
@@ -178,7 +187,7 @@ async function handleMessage(msg: DBRequest) {
           const dropCmd = isView ? 'DROP VIEW' : 'DROP TABLE'
 
           await connection.run(`${dropCmd} IF EXISTS "${tableName}"`)
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
           } as DBResponse)
@@ -209,7 +218,7 @@ async function handleMessage(msg: DBRequest) {
             throw new Error(`Unsupported ingestion format: ${format}`)
           }
 
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
           } as DBResponse)
@@ -223,7 +232,7 @@ async function handleMessage(msg: DBRequest) {
           } catch (e) {
             console.error('Error during close:', e)
           }
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
           } as DBResponse)
@@ -240,7 +249,7 @@ async function handleMessage(msg: DBRequest) {
             "SELECT 'Native DuckDB is Alive' as status"
           )
           const rows = await result.getRowObjectsJS()
-          process.parentPort?.postMessage({
+          sendToParent({
             reqId,
             success: true,
             data: rows[0],
@@ -254,7 +263,7 @@ async function handleMessage(msg: DBRequest) {
     } catch (err: any) {
       logToFile(`[Error] ${type}: ${err.message}\nStack: ${err.stack}`)
       console.error(`[DB-Worker] Error handling ${type}:`, err)
-      process.parentPort?.postMessage({
+      sendToParent({
         reqId,
         success: false,
         error: err.message,
@@ -268,8 +277,13 @@ if (process.parentPort) {
     logToFile(`Received message: ${e.data.type}`)
     handleMessage(e.data)
   })
+} else if (process.on) {
+  process.on('message', (msg: DBRequest) => {
+    logToFile(`Received message (child_process): ${msg.type}`)
+    handleMessage(msg)
+  })
 } else {
-  logToFile('[Warning] No parentPort detected!')
+  logToFile('[Warning] No parentPort or process.on detected!')
 }
 
 console.log('[DB-Service] Utility Process Entry Ready')
