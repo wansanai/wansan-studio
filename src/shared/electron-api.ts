@@ -140,6 +140,10 @@ export interface ElectronAPI {
     userQuery: string,
     dataSample: any[]
   ) => Promise<IPCResponse<GenUIResponse>>
+  generateSemanticUI: (
+    userQuery: string,
+    dataSample: any[]
+  ) => Promise<IPCResponse<GenUIResponse>>
 
   // AI Config
   getAIConfig: () => Promise<AIConfigResponse>

@@ -9,7 +9,7 @@ interface ShadowWidgetProps {
   data?: any
 }
 
-const ShadowWidget: React.FC<ShadowWidgetProps> = ({ payload, width, height, data }) => {
+const ShadowWidget: React.FC<ShadowWidgetProps> = ({ payload, width, height, data = [] }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const shadowRootRef = useRef<ShadowRoot | null>(null)
   const chartInstancesRef = useRef<echarts.ECharts[]>([])
@@ -33,34 +33,29 @@ const ShadowWidget: React.FC<ShadowWidgetProps> = ({ payload, width, height, dat
     }
     cleanup()
 
-    // 1. Reset structure
     shadow.innerHTML = ''
     
-    // 2. Styles
+    // Inject Styles
     const style = document.createElement('style')
-    style.textContent = `
-      :host { display: block; width: 100%; height: 100%; }
-      #chart-container { 
-        min-height: 250px; 
-        width: 100%; 
-        display: block !important;
-        background: rgba(0,0,0,0.02);
-      }
-      @import "https://cdn.tailwindcss.com";
-    `
+    style.textContent = 
+      '@import "https://cdn.tailwindcss.com";\n' +
+      ':host { display: block; width: 100%; height: 100%; font-family: ui-sans-serif, system-ui, sans-serif; }\n' +
+      '* { box-sizing: border-box; }\n' +
+      '[id*="chart"] { min-height: 250px; width: 100%; display: block !important; }'
     shadow.appendChild(style)
 
-    // 3. HTML
+    // Inject HTML
     const contentWrapper = document.createElement('div')
     contentWrapper.style.width = '100%'
     contentWrapper.style.height = '100%'
     contentWrapper.innerHTML = payload.html
     shadow.appendChild(contentWrapper)
 
-    // 4. Sandbox Execution
+    // Execution Sandbox
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = requestAnimationFrame(() => {
         try {
+          // --- Prepare Sandbox Context ---
           const trackedEcharts = {
             ...echarts,
             init: (dom: HTMLElement, theme?: string | object, opts?: any) => {
@@ -69,50 +64,48 @@ const ShadowWidget: React.FC<ShadowWidgetProps> = ({ payload, width, height, dat
               return inst
             },
           }
-
           const TrackedResizeObserver = class extends ResizeObserver {
-            constructor(callback: ResizeObserverCallback) {
-              super(callback)
-              observersRef.current.push(this)
-            }
+            constructor(callback: ResizeObserverCallback) { super(callback); observersRef.current.push(this) }
           }
-          
-          const createIcons = () => {
-            if ((window as any).lucide) {
-              (window as any).lucide.createIcons({ root: shadow })
-            }
-          }
+          const createIcons = () => { if ((window as any).lucide) (window as any).lucide.createIcons({ root: shadow }) }
 
-          const env = { 
-            echarts: trackedEcharts, 
+          const scope = {
+            root: shadow,
+            data: data,
+            echarts: trackedEcharts,
             ResizeObserver: TrackedResizeObserver,
-            createIcons 
+            createIcons: createIcons,
+            console: console,
+            // Aliases to handle AI inconsistency
+            __inputData__: data,
+            __shadowRoot__: shadow,
+            document: shadow,
+            window: window
           }
+          
+          // --- Code Sanitization & Execution ---
+          // 1. Remove AI's own 'const root = ...' declarations to avoid errors
+          let sanitizedJs = payload.js.replace(/^\s*(?:const|let|var)\s+root\s*=.*/gm, '');
 
-          const proxyWindow = new Proxy(window, {
-            get(target, prop) {
-              if (prop === 'echarts') return trackedEcharts
-              if (prop === 'data') return data
-              return (target as any)[prop]
-            }
-          })
+          // 2. Wrap sanitized code in a 'with' block for clean scope injection
+          const sandboxedCode = `with (scope) { ${sanitizedJs} }`
           
-          const renderFunc = new Function(
-            'root', 
-            '__inputData__', 
-            'env', 
-            'echarts', 
-            'ResizeObserver', 
-            'createIcons', 
-            'window',
-            payload.js
-          )
+          const renderFunc = new Function('scope', sandboxedCode)
+          renderFunc(scope)
           
-          renderFunc(shadow, data, env, trackedEcharts, TrackedResizeObserver, createIcons, proxyWindow)
           createIcons()
           
         } catch (err: any) {
           console.error('[ShadowWidget] Runtime Error:', err)
+          const errorBox = document.createElement('div')
+          Object.assign(errorBox.style, {
+            padding: '1.5rem', margin: '1rem', border: '1px solid #fee2e2',
+            backgroundColor: '#fef2f2', color: '#991b1b', borderRadius: '0.75rem',
+            fontFamily: 'monospace', fontSize: '0.75rem', whiteSpace: 'pre-wrap'
+          })
+          errorBox.textContent = `[GenUI Error] ${err.message}`
+          shadow.innerHTML = ''
+          shadow.appendChild(errorBox)
         }
       })
     })

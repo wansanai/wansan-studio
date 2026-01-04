@@ -44,4 +44,5 @@ export type GenUIPayload = z.infer<typeof GenUIPayloadSchema>
 export interface GenUIResponse {
   spec: GenUIPayload
   reasoning: string
+  insight?: InsightPayload
 }

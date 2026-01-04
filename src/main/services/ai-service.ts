@@ -151,11 +151,19 @@ export class AIService {
     }
   }
 
-  private requireOpenAI(): OpenAI {
+  requireOpenAI(): OpenAI {
     if (!this.openai) {
       throw new Error('AI not configured')
     }
     return this.openai
+  }
+
+  getOpenAI(): OpenAI | null {
+    return this.openai
+  }
+
+  get modelName(): string {
+    return this.model
   }
 
   async verifyConnection(config?: AIConfig): Promise<boolean> {

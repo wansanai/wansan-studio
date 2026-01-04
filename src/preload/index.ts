@@ -60,6 +60,8 @@ const electronAPI: ElectronAPI = {
   }) => ipcRenderer.invoke('ai:generate-metric-expression', options),
   generateUI: (userQuery: string, dataSample: any[]) =>
     ipcRenderer.invoke('ai:generate-ui', userQuery, dataSample),
+  generateSemanticUI: (userQuery: string, dataSample: any[]) =>
+    ipcRenderer.invoke('gen-ui:generate', userQuery, dataSample),
   getAIConfig: () => ipcRenderer.invoke('get-ai-config'),
   setAIConfig: (config: any) => ipcRenderer.invoke('set-ai-config', config),
   clearAIConfig: () => ipcRenderer.invoke('clear-ai-config'),

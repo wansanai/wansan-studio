@@ -8,6 +8,7 @@ import { executeSQL } from '../engine/executor'
 import { checkFilesConsistency } from '../engine/file-watcher'
 import { ingestJsonData, getUniqueTableName } from '../engine/ingestion'
 import { exportWebReport } from './web-export'
+import { GenUIService } from './gen-ui-service'
 import fs from 'fs-extra'
 import os from 'os'
 import Store from 'electron-store'
@@ -26,6 +27,7 @@ export function setupIPC(
   aiService: AIService
 ) {
   const fileService = new FileService(databaseService)
+  const genUiService = new GenUIService(aiService.requireOpenAI(), aiService.modelName)
 
   ipcMain.handle('open-external', async (_event, url: string) => {
     try {
@@ -266,7 +268,7 @@ export function setupIPC(
     }
   )
 
-  // AI Generate UI
+  // AI Generate UI (Spike)
   ipcMain.handle(
     'ai:generate-ui',
     async (_event, userQuery: string, dataSample: any[]) => {
@@ -275,6 +277,23 @@ export function setupIPC(
         return { success: true, data: result }
       } catch (error) {
         console.error('Generate UI error:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      }
+    }
+  )
+
+  // AI Semantic Generate UI
+  ipcMain.handle(
+    'gen-ui:generate',
+    async (_event, userQuery: string, dataSample: any[]) => {
+      try {
+        const result = await genUiService.generateSemanticUI(dataSample, userQuery)
+        return { success: true, data: result }
+      } catch (error) {
+        console.error('Semantic Generate UI error:', error)
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
