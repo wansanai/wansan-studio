@@ -1,4 +1,4 @@
-import { DuckDBInstance } from '@duckdb/node-api'
+import type { DuckDBInstance as DuckDBInstanceType } from '@duckdb/node-api'
 import { DBRequest, DBResponse } from '../../../shared/types/ipc-db'
 import { sanitizeValue } from '../../../shared/serialization'
 import { normalizeDuckDBType } from '../../../shared/type-utils'
@@ -52,7 +52,27 @@ log('Environment Info:', {
   pid: process.pid
 })
 
-let db: DuckDBInstance | null = null
+// Dynamic Loader for Native Module
+let DuckDBClass: typeof DuckDBInstanceType | null = null;
+
+async function loadDuckDB() {
+  if (DuckDBClass) return DuckDBClass;
+  try {
+    log('[DB-Worker] Loading @duckdb/node-api...')
+    // Use Function to bypass webpack/bundler static analysis if needed, 
+    // but standard dynamic import() is usually sufficient and safer for types.
+    // However, in CJS output, import() returns a Promise resolving to the module.
+    const module = await import('@duckdb/node-api');
+    DuckDBClass = module.DuckDBInstance;
+    log('[DB-Worker] @duckdb/node-api loaded successfully')
+    return DuckDBClass;
+  } catch (e) {
+    logError('[DB-Worker] Failed to load @duckdb/node-api', e);
+    throw e;
+  }
+}
+
+let db: DuckDBInstanceType | null = null
 let connection: any = null
 let messageQueue: Promise<void> = Promise.resolve()
 
@@ -82,7 +102,10 @@ async function handleMessage(msg: DBRequest) {
           log(`[DB-Worker] Connecting to ${dbPath}...`)
           
           try {
-            db = await DuckDBInstance.create(dbPath)
+            const DuckDB = await loadDuckDB();
+            if (!DuckDB) throw new Error('DuckDB Class not loaded');
+
+            db = await DuckDB.create(dbPath)
             log('[DB-Worker] DB Instance created')
             
             connection = await db.connect()
@@ -203,7 +226,7 @@ async function handleMessage(msg: DBRequest) {
           const isView = tableName.startsWith('v_')
           const dropCmd = isView ? 'DROP VIEW' : 'DROP TABLE'
 
-          await connection.run(`${dropCmd} IF EXISTS "${tableName}"`) 
+          await connection.run(`${dropCmd} IF EXISTS "${tableName}"`)
           process.parentPort?.postMessage({
             reqId,
             success: true,
@@ -266,20 +289,29 @@ async function handleMessage(msg: DBRequest) {
         case 'TEST':
         case 'TEST_CONNECTION': {
           log('[DB-Worker] TEST_CONNECTION received')
-          if (!db || !connection) {
-            log('[DB-Worker] Auto-connecting for test...')
-            db = await DuckDBInstance.create(':memory:')
-            connection = await db.connect()
+          try {
+             // Ensure DB class is loaded
+             const DuckDB = await loadDuckDB();
+             if (!DuckDB) throw new Error('DuckDB Class not loaded');
+
+             if (!db || !connection) {
+              log('[DB-Worker] Auto-connecting for test...')
+              db = await DuckDB.create(':memory:')
+              connection = await db.connect()
+            }
+            const result = await connection.run(
+              "SELECT 'Native DuckDB is Alive' as status"
+            )
+            const rows = await result.getRowObjectsJS()
+            process.parentPort?.postMessage({
+              reqId,
+              success: true,
+              data: rows[0],
+            } as DBResponse)
+          } catch (testErr) {
+             logError('[DB-Worker] TEST_CONNECTION failed', testErr);
+             throw testErr;
           }
-          const result = await connection.run(
-            "SELECT 'Native DuckDB is Alive' as status"
-          )
-          const rows = await result.getRowObjectsJS()
-          process.parentPort?.postMessage({
-            reqId,
-            success: true,
-            data: rows[0],
-          } as DBResponse)
           break
         }
 
