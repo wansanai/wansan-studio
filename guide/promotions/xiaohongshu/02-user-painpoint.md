@@ -37,6 +37,6 @@
 直接在设置里输入激活码：**WANSAN-BETA-2025** 即可激活全量 Pro 功能。
 
 🔗 **点击查看保姆级使用手册 & 下载地址：**
-[此处填入您的飞书知识库链接]
+https://my.feishu.cn/wiki/space/7597050214372887492
 
 #数据分析 #运营日常 #ChatGPT #职场效率 #Excel救星 #WansanStudio #工具安利 #BI #独立开发

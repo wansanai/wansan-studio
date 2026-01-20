@@ -49,6 +49,6 @@ Wansan Studio 目前正处于 Beta 测试期。
 直接在设置里输入激活码：**WANSAN-BETA-2025** 即可激活全量 Pro 功能。
 
 🔗 **点击查看智能建模教程 & 下载地址：**
-[此处填入您的飞书知识库链接]
+https://my.feishu.cn/wiki/space/7597050214372887492
 
 #数据分析 #建模 #Excel技巧 #职场神器 #WansanStudio #DeepSeek #独立开发 #沈万三
