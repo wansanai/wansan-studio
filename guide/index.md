@@ -43,9 +43,14 @@ Wansan Studio 是一款配合 AI 使用的本地数据分析工具。它能帮�
 2.  [业务规则与记忆](./core-features/business-rules.md) —— 设置全局或项目级的分析偏好。
 3.  [SQL 工作台 (高级)](./advanced/sql-workbench.md) —— 手动编写 SQL 指令进行深度探索。
 4.  [AI 智能内核](./core-features/ai-kernel.md) —— 深入了解 AI 如何在本地保护隐私并辅助分析。
-5.  [项目存储结构](./core-features/project-bundle.md) —— 了解 .wansan 文件包的物理构成与同步建议。
+5.  [项目存储结构](./core-features/project-bundle.md) —— 了解 .wansan 文件包的物理构成。
 
 ---
 
 ## 🛡️ 安全与隐私
 *   [隐私与安全协议](./core-features/privacy.md) —— 为什么 Wansan 是安全的？
+
+---
+
+## 📄 其他
+*   [更新历史](./changelog.md) —— 了解万三的进化历程。
