@@ -2,8 +2,11 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import debounce from 'lodash.debounce'
 import { useProjectStore } from '../stores/useProjectStore'
 import { useProjectIO } from './useProjectIO'
+import { hasPersistentProjectChanges } from '@/components/main-content-utils'
 
 export type AutoSaveStatus = 'saved' | 'saving' | 'error' | 'unsaved'
+
+export { hasPersistentProjectChanges }
 
 export function useAutoSave() {
   const [status, setStatus] = useState<AutoSaveStatus>('saved')
@@ -11,7 +14,6 @@ export function useAutoSave() {
   const { saveProject } = useProjectIO()
   const currentProjectPath = useProjectStore(s => s.currentProjectPath)
 
-  // Use a ref to track if we have pending changes
   const isDirty = useRef(false)
 
   const performSave = useCallback(async () => {
@@ -30,7 +32,6 @@ export function useAutoSave() {
     }
   }, [currentProjectPath, saveProject])
 
-  // Debounced save (2000ms)
   const debouncedSave = useMemo(
     () =>
       debounce(() => {
@@ -39,24 +40,11 @@ export function useAutoSave() {
     [performSave]
   )
 
-  // Subscribe to relevant store changes
   useEffect(() => {
     if (!currentProjectPath) return
 
-    // We subscribe to the whole state but filter for "content" changes
-    // Alternatively, we could specify keys.
-    // For simplicity and robustness, any change to files, relations, sessions, or registry is a change.
     const unsub = useProjectStore.subscribe((state, prevState) => {
-      // Avoid triggering on transient UI state changes if possible,
-      // but useProjectStore has mixed state.
-      // We check for structural data changes.
-      if (
-        state.files !== prevState.files ||
-        state.sessions !== prevState.sessions ||
-        state.widgetRegistry !== prevState.widgetRegistry ||
-        state.activeSessionId !== prevState.activeSessionId ||
-        state.activeView !== prevState.activeView
-      ) {
+      if (hasPersistentProjectChanges(state, prevState)) {
         isDirty.current = true
         setStatus('unsaved')
         debouncedSave()
@@ -69,7 +57,6 @@ export function useAutoSave() {
     }
   }, [currentProjectPath, debouncedSave])
 
-  // Save on blur
   useEffect(() => {
     const handleBlur = () => {
       if (isDirty.current) {
@@ -82,13 +69,9 @@ export function useAutoSave() {
     return () => window.removeEventListener('blur', handleBlur)
   }, [performSave, debouncedSave])
 
-  // Save on beforeunload
   useEffect(() => {
     const handleBeforeUnload = (_e: BeforeUnloadEvent) => {
       if (isDirty.current) {
-        // We can't await here reliably in all browsers,
-        // but Electron utility processes / main process handling often keeps it alive.
-        // We trigger the save.
         performSave()
       }
     }

@@ -230,47 +230,51 @@ export function DataPreviewStep() {
           <TableHeader className="sticky top-0 z-20 bg-zinc-50 shadow-sm border-b">
               <TableRow>
                 {(mode === 'append' || mode === 'merge') && targetFile
-                  ? targetFile.columns.map(targetCol => (
-                      <ColumnMappingHead
-                        key={targetCol.name}
-                        targetColumn={targetCol}
-                        sourceColumns={currentTask.columns}
-                        currentMapping={currentTask.columnMapping}
-                        onMappingChange={handleMappingChange}
-                        isMergeMode={mode === 'merge'}
-                        isMergeKey={(currentTask.mergeKeys || []).includes(
-                          targetCol.name
-                        )}
-                        onToggleMergeKey={() =>
-                          toggleMergeKey(currentTaskIndex, targetCol.name)
-                        }
-                      />
-                    ))
-                  : currentTask.columns.map(col => (
-                      <ColumnPreviewHead
-                        key={col.name}
-                        column={col}
-                        onTogglePK={() =>
-                          handleTogglePK(col.name, !col.isPrimaryKey)
-                        }
-                        onToggleIgnore={() =>
-                          updateColumnConfig(currentTaskIndex, col.name, {
-                            isIgnored: !col.isIgnored,
-                          })
-                        }
-                        onTypeChange={type =>
-                          handleTypeChange(col.name, type as ColumnType)
-                        }
-                      />
-                    ))}
+                  ? targetFile.columns
+                      .filter(c => c.name !== '_ws_row_id')
+                      .map(targetCol => (
+                        <ColumnMappingHead
+                          key={targetCol.name}
+                          targetColumn={targetCol}
+                          sourceColumns={currentTask.columns}
+                          currentMapping={currentTask.columnMapping}
+                          onMappingChange={handleMappingChange}
+                          isMergeMode={mode === 'merge'}
+                          isMergeKey={(currentTask.mergeKeys || []).includes(
+                            targetCol.name
+                          )}
+                          onToggleMergeKey={() =>
+                            toggleMergeKey(currentTaskIndex, targetCol.name)
+                          }
+                        />
+                      ))
+                  : currentTask.columns
+                      .filter(c => c.name !== '_ws_row_id')
+                      .map(col => (
+                        <ColumnPreviewHead
+                          key={col.name}
+                          column={col}
+                          onTogglePK={() =>
+                            handleTogglePK(col.name, !col.isPrimaryKey)
+                          }
+                          onToggleIgnore={() =>
+                            updateColumnConfig(currentTaskIndex, col.name, {
+                              isIgnored: !col.isIgnored,
+                            })
+                          }
+                          onTypeChange={type =>
+                            handleTypeChange(col.name, type as ColumnType)
+                          }
+                        />
+                      ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {currentTask.previewData.map((row, rowIdx) => (
                 <TableRow key={rowIdx} className="hover:bg-zinc-50/50">
                   {((mode === 'append' || mode === 'merge') && targetFile
-                    ? targetFile.columns
-                    : currentTask.columns
+                    ? targetFile.columns.filter(c => c.name !== '_ws_row_id')
+                    : currentTask.columns.filter(c => c.name !== '_ws_row_id')
                   ).map(col => {
                     const sourceColName =
                       mode === 'append' || mode === 'merge'

@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Bug,
   CheckCircle2,
+  Coins,
   Key,
   Settings2,
   Sparkles,
@@ -38,6 +39,7 @@ import { exportDebugLog } from '../../utils/debug-exporter'
 import { DISCLAIMER_TEXT_EN, DISCLAIMER_TEXT_ZH } from '../../lib/legal-text'
 import { SimpleMarkdown } from '@/components/ui/simple-markdown'
 import { DomainKnowledgeTab } from './domain-knowledge-tab'
+import { TokenAuditTab } from './TokenAuditTab'
 
 type VerifyStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -208,12 +210,15 @@ export function SettingsDialog(_props: SettingsDialogProps) {
           className="flex flex-col flex-1 overflow-hidden"
         >
           <div className="px-6 pt-12 shrink-0">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="ai" className="flex gap-2">
                 <Sparkles className="w-4 h-4" /> {t('tabs.ai')}
               </TabsTrigger>
               <TabsTrigger value="domain" className="flex gap-2">
                 <BrainCircuit className="w-4 h-4" /> {t('tabs.domain')}
+              </TabsTrigger>
+              <TabsTrigger value="audit" className="flex gap-2">
+                <Coins className="w-4 h-4" /> {t('tabs.audit')}
               </TabsTrigger>
               <TabsTrigger value="general" className="flex gap-2">
                 <Settings2 className="w-4 h-4" /> {t('tabs.general')}
@@ -463,6 +468,14 @@ export function SettingsDialog(_props: SettingsDialogProps) {
             className="flex-1 overflow-y-auto px-6 py-4"
           >
             <DomainKnowledgeTab />
+          </TabsContent>
+
+          {/* TAB: AUDIT */}
+          <TabsContent
+            value="audit"
+            className="flex-1 overflow-y-auto px-6 py-4"
+          >
+            <TokenAuditTab />
           </TabsContent>
 
           {/* TAB: GENERAL */}

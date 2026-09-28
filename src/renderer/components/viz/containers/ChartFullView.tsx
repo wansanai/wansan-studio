@@ -39,7 +39,7 @@ import { Label } from '@/components/ui/label'
 const chartTypeOptions: Array<{
   value: ChartType
   label: string
-  icon: React.ComponentType<any>
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }> = [
   { value: 'bar', label: 'chart_bar', icon: BarChart3 },
   { value: 'line', label: 'chart_line', icon: LineChart },
@@ -147,8 +147,8 @@ export function ChartFullView() {
 
   const handleChartTypeChange = (type: ChartType) => {
     const adapted = adaptChartConfig(
-      type as any,
-      effectiveType as any,
+      type,
+      effectiveType,
       effectiveConfig,
       data || []
     )
@@ -232,7 +232,7 @@ export function ChartFullView() {
 
     // Save everything to Registry / Workbench
     const finalReportData: Partial<ReportData> = {
-      chartType: effectiveType as any,
+      chartType: effectiveType,
       vizConfig: effectiveConfig,
       title: effectiveTitle.trim(),
       content: effectiveContent,

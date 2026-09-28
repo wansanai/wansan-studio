@@ -9,39 +9,56 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import './mocks/i18n'
 import i18n from './mocks/i18n'
 
-// Data Injection Interface
+type WorkbenchSnapshot = Partial<ReturnType<typeof useWorkbenchStore.getState>>
+type ProjectSnapshot = Partial<ReturnType<typeof useProjectStore.getState>>
+type UISnapshot = Partial<ReturnType<typeof useUIStore.getState>>
+type SettingsSnapshot = Partial<ReturnType<typeof useSettingsStore.getState>>
+
 interface WansanSnapshot {
-  workbench: any
-  project: any
-  ui: any
-  settings?: any
+  workbench?: WorkbenchSnapshot
+  project?: ProjectSnapshot
+  ui?: UISnapshot
+  settings?: SettingsSnapshot
   lang?: 'en' | 'zh'
 }
 
-const snapshot = (window as any).__WANSAN_SNAPSHOT__ as WansanSnapshot
+interface HydratableStore<TState> {
+  setState: (state: TState) => void
+}
+
+declare global {
+  interface Window {
+    __WANSAN_SNAPSHOT__?: WansanSnapshot
+  }
+}
+
+const snapshot = window.__WANSAN_SNAPSHOT__
+const workbenchStore = useWorkbenchStore as unknown as HydratableStore<WorkbenchSnapshot>
+const projectStore = useProjectStore as unknown as HydratableStore<ProjectSnapshot>
+const uiStore = useUIStore as unknown as HydratableStore<UISnapshot>
+const settingsStore = useSettingsStore as unknown as HydratableStore<SettingsSnapshot>
 
 if (snapshot) {
   console.log('Hydrating from snapshot...', snapshot)
-  
-  // Set Language
+
   if (snapshot.lang) {
-      i18n.changeLanguage(snapshot.lang)
+    i18n.changeLanguage(snapshot.lang)
   }
 
   if (snapshot.workbench) {
-    (useWorkbenchStore as any).setState(snapshot.workbench)
+    workbenchStore.setState(snapshot.workbench)
   }
-  
+
   if (snapshot.project) {
-    (useProjectStore as any).setState(snapshot.project)
+    projectStore.setState(snapshot.project)
   }
 
   if (snapshot.ui) {
-      (useUIStore as any).setState(snapshot.ui)
+    uiStore.setState(snapshot.ui)
   }
 
   if (snapshot.settings) {
-    (useSettingsStore as any).setState(snapshot.settings)
+    settingsStore.setState(snapshot.settings)
   }
 }
 

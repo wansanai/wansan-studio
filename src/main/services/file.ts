@@ -1,5 +1,6 @@
 import fs from 'fs-extra'
 import { basename, extname } from 'path'
+import readline from 'readline'
 import { NativeDatabaseService } from './native-db-service'
 import { TempFileManager } from '../utils/temp-manager'
 import {
@@ -15,7 +16,20 @@ import {
   CreateTableParams,
   IngestPreCheckParams,
   IngestPreCheckResponse,
+  ValidateColumnTypesParams,
 } from '@shared/electron-api.ts'
+
+type FileProgressInfo = {
+  rowCount?: number
+  isPercentage?: boolean
+  progress?: number
+}
+
+type TableInfoRow = Record<string, unknown>
+
+type TableNameRow = {
+  table_name: string
+}
 
 export class FileService {
   constructor(private databaseService: NativeDatabaseService) {}
@@ -56,13 +70,13 @@ export class FileService {
   async prepareFile(
     filePath: string,
     sourceName: string,
-    _readOptions?: Record<string, any>
+    _readOptions?: Record<string, unknown>
   ): Promise<{
     tempFilePath: string
     rowCount: number
     columns: ColumnSchema[]
-    preview: any[]
-    readOptions?: Record<string, any>
+    preview: Record<string, unknown>[]
+    readOptions?: Record<string, unknown>
   }> {
     const ext = extname(filePath).toLowerCase()
     const fileName = basename(filePath)
@@ -98,14 +112,15 @@ export class FileService {
 
     // Branch B: Flat Files -> DuckDB Direct Read + Encoding Detection
     let reader = 'read_csv_auto'
-    let detectedOptions: Record<string, any> | undefined = undefined
+    let detectedOptions: Record<string, unknown> | undefined = undefined
+    let activePath = safePath // Path to be used for reading (might be cleaned temp file)
 
     if (ext === '.json') {
       reader = 'read_json_auto'
       const opts = "format='auto', auto_detect=true"
       try {
         await this.databaseService.query(
-          `DESCRIBE SELECT * FROM ${reader}('${safePath}', ${opts})`
+          `DESCRIBE SELECT * FROM ${reader}('${activePath}', ${opts})`
         )
         detectedOptions = { format: 'auto', auto_detect: true }
       } catch {
@@ -114,7 +129,25 @@ export class FileService {
     } else if (ext === '.parquet') {
       reader = 'read_parquet'
     } else if (ext === '.csv') {
-      detectedOptions = await this.detectCsvEncoding(safePath)
+      try {
+        detectedOptions = await this.detectCsvEncoding(activePath)
+      } catch (e) {
+        // [V1.7] Heuristic Fallback: Try to clean the file (remove thousands separators)
+        console.warn('Standard CSV detection failed. Attempting heuristic cleaning...', e)
+        const cleanedPath = await this.applyHeuristicCleaning(filePath)
+        if (cleanedPath) {
+          try {
+             const cleanedSafePath = cleanedPath.replace(/\\/g, '/')
+             detectedOptions = await this.detectCsvEncoding(cleanedSafePath)
+             activePath = cleanedSafePath // Use the cleaned file for subsequent queries
+             console.log('Heuristic cleaning successful using file:', activePath)
+          } catch (cleanErr) {
+             throw new Error(`Failed to parse CSV even after heuristic cleaning: ${cleanErr.message}`)
+          }
+        } else {
+           throw e // Rethrow original error if heuristic didn't apply or fail
+        }
+      }
     }
 
     // Final Read
@@ -131,7 +164,7 @@ export class FileService {
       optionsStr = ', auto_detect=true'
     }
 
-    const readSql = `${reader}('${safePath}'${optionsStr})`
+    const readSql = `${reader}('${activePath}'${optionsStr})`
 
     const preview = await this.databaseService.query(
       `SELECT * FROM ${readSql} LIMIT 100`
@@ -143,15 +176,15 @@ export class FileService {
       `SELECT COUNT(*) as count FROM ${readSql}`
     )
 
-    const columns: ColumnSchema[] = columnsResult.map((col: any) => ({
-      name: col.column_name,
-      safeName: col.column_name,
-      type: normalizeDuckDBType(col.column_type) as ColumnType,
+    const columns: ColumnSchema[] = columnsResult.map((col: Record<string, unknown>) => ({
+      name: col.column_name as string,
+      safeName: col.column_name as string,
+      type: normalizeDuckDBType(col.column_type as string) as ColumnType,
       sampleValues: [],
     }))
 
     return {
-      tempFilePath: filePath,
+      tempFilePath: activePath === safePath ? filePath : activePath, // Return the cleaned path if used
       rowCount: Number(countResult[0].count),
       columns,
       preview,
@@ -159,8 +192,46 @@ export class FileService {
     }
   }
 
+  // [V1.7] Heuristic Cleaning for CSVs (Thousands Separator Removal)
+  private async applyHeuristicCleaning(filePath: string): Promise<string | null> {
+    try {
+      const fd = await fs.open(filePath, 'r')
+      const buffer = Buffer.alloc(4096)
+      const bytesRead = await fs.read(fd, buffer, 0, 4096, 0)
+      await fs.close(fd)
+      const sample = buffer.toString('utf8', 0, bytesRead.bytesRead)
+      
+      // Check for digit-comma-digit pattern (e.g. 1,000)
+      const hasThousands = /\d{1,3}(,\d{3})+/.test(sample)
+      if (!hasThousands) return null
+      
+      await TempFileManager.ensureTempDir()
+      const tempPath = TempFileManager.getTempFilePath('.csv')
+      const readStream = fs.createReadStream(filePath, { encoding: 'utf8' })
+      const writeStream = fs.createWriteStream(tempPath, { encoding: 'utf8' })
+      
+      const rl = readline.createInterface({
+        input: readStream,
+        crlfDelay: Infinity
+      })
+      
+      for await (const line of rl) {
+        // Remove commas that are surrounded by digits: 1,234 -> 1234
+        const cleaned = line.replace(/(\d),(?=\d{3})/g, '$1')
+        writeStream.write(cleaned + '\n')
+      }
+      
+      writeStream.end()
+      await new Promise(fulfill => writeStream.on('finish', () => fulfill(undefined)))
+      return tempPath
+    } catch (e) {
+      console.warn('Heuristic cleaning failed:', e)
+      return null
+    }
+  }
+
   // Legacy parseFile (keep for safety)
-  async parseFile(filePath: string, _onProgress?: (info: any) => void) {
+  async parseFile(filePath: string, _onProgress?: (info: FileProgressInfo) => void) {
     const res = await this.prepareFile(filePath, basename(filePath))
     return [
       {
@@ -177,8 +248,12 @@ export class FileService {
   }
 
   async validateColumnTypes(
-    params: any
-  ): Promise<{ valid: boolean; error?: string; errorDetail?: any }> {
+    params: ValidateColumnTypesParams
+  ): Promise<{
+    valid: boolean
+    error?: string
+    errorDetail?: { column: string; value: string; type: string }
+  }> {
     const { filePath, tempFilePath, sourceTableName, columns, readOptions } =
       params
     let readSql = ''
@@ -206,10 +281,10 @@ export class FileService {
         await this.databaseService.query(
           `SELECT CAST("${col.name}" AS ${col.type}) FROM ${readSql} LIMIT 50000`
         )
-      } catch (e: any) {
+      } catch (e: unknown) {
         return {
           valid: false,
-          error: e.message,
+          error: e instanceof Error ? e.message : String(e),
           errorDetail: { column: col.name, type: col.type, value: '?' },
         }
       }
@@ -221,9 +296,9 @@ export class FileService {
     filePath: string,
     tableName: string,
     sheetName?: string,
-    _onProgress?: any,
+    _onProgress?: (info: FileProgressInfo) => void,
     knownColumns?: ColumnSchema[],
-    readOptions?: Record<string, any>
+    readOptions?: Record<string, unknown>
   ): Promise<ReloadResult> {
     if (filePath === 'DEMO_MEMORY') {
       const result = await ingestJsonData(
@@ -243,7 +318,16 @@ export class FileService {
       : ''
 
     if (ext === '.xlsx' || ext === '.xls') {
-      const schemas = await ingestExcelFile(
+      // For Excel, we currently rely on the worker. The worker creates the table directly.
+      // Ideally, the worker should also support sequence generation or we wrap it here.
+      // However, ingestExcelFile logic is complex.
+      // Strategy: Let ingestExcelFile create the table (e.g. "t_123"), then we restructure it.
+      // Or we modify ingestExcelFile.
+      // Given ingestExcelFile is in another file, let's look at `createTableFromSource` which is generic.
+      // But reIngestFile calls ingestExcelFile directly.
+      // To ensure consistency, we should reconstruct the table here after ingestExcelFile returns.
+      
+      const _schemas = await ingestExcelFile(
         filePath,
         this.databaseService,
         basename(filePath),
@@ -253,11 +337,51 @@ export class FileService {
         't_',
         typesParam
       )
+      
+      // [V1.7] Post-processing: Ensure _ws_row_id exists
+      // The worker creates the table `tableName`. We need to add the ID column.
+      const seqName = this.getSequenceName(tableName)
+      await this.databaseService.exec(`CREATE SEQUENCE IF NOT EXISTS "${seqName}" START 1`)
+      
+      // Check if _ws_row_id already exists (unlikely unless worker adds it)
+      const hasId = await this.databaseService.query(`SELECT 1 FROM information_schema.columns WHERE table_name = '${tableName}' AND column_name = '_ws_row_id'`)
+      if (hasId.length === 0) {
+        const tempName = `${tableName}_temp_${Date.now()}`
+        await this.databaseService.exec(`ALTER TABLE "${tableName}" RENAME TO "${tempName}"`)
+        await this.databaseService.exec(`CREATE TABLE "${tableName}" AS SELECT nextval('${seqName}') AS _ws_row_id, * FROM "${tempName}"`)
+        await this.databaseService.exec(`DROP TABLE "${tempName}"`)
+      }
+
+      const columnsResult = await this.databaseService.query(
+        `PRAGMA table_info('${tableName}');`
+      )
+      // Re-fetch columns to include _ws_row_id
+       const finalCols = await Promise.all(
+        columnsResult.map(async (col: TableInfoRow) => {
+          const type = normalizeDuckDBType(col.type as string)
+          return {
+            name: col.name as string,
+            safeName: col.name as string,
+            type: type as ColumnType,
+            sampleValues: await getSampleValues(
+              this.databaseService,
+              tableName,
+              col.name as string,
+              type as ColumnType
+            ),
+          }
+        })
+      )
+
       return {
         lastModified: stats.mtimeMs,
-        newColumns: schemas[0]?.columns || [],
+        newColumns: finalCols,
       }
     } else {
+      const seqName = this.getSequenceName(tableName)
+      await this.databaseService.exec(`DROP SEQUENCE IF EXISTS "${seqName}"`)
+      await this.databaseService.exec(`CREATE SEQUENCE "${seqName}" START 1`)
+
       await this.databaseService.exec(`DROP TABLE IF EXISTS "${tableName}"`)
       const safePath = filePath.replace(/\\/g, '/')
       const reader =
@@ -283,22 +407,23 @@ export class FileService {
       const loadSql = `${reader}('${safePath}'${typesParam ? ', ' + typesParam : ''}${opts ? ', ' + opts : ''})`
 
       await this.databaseService.exec(
-        `CREATE TABLE "${tableName}" AS SELECT * FROM ${loadSql}`
+        `CREATE TABLE "${tableName}" AS SELECT nextval('${seqName}') AS _ws_row_id, * FROM ${loadSql}`
       )
+      
       const columnsResult = await this.databaseService.query(
         `PRAGMA table_info('${tableName}');`
       )
       const finalCols = await Promise.all(
-        columnsResult.map(async (col: any) => {
-          const type = normalizeDuckDBType(col.type)
+        columnsResult.map(async (col: TableInfoRow) => {
+          const type = normalizeDuckDBType(col.type as string)
           return {
-            name: col.name,
-            safeName: col.name,
+            name: col.name as string,
+            safeName: col.name as string,
             type: type as ColumnType,
             sampleValues: await getSampleValues(
               this.databaseService,
               tableName,
-              col.name,
+              col.name as string,
               type as ColumnType
             ),
           }
@@ -308,7 +433,9 @@ export class FileService {
     }
   }
 
-  async createTableFromSource(params: CreateTableParams): Promise<any> {
+  async createTableFromSource(
+    params: CreateTableParams
+  ): Promise<{ rowCount: number; columns: ColumnSchema[] }> {
     const {
       filePath,
       tableName,
@@ -328,13 +455,19 @@ export class FileService {
 
     const limit = params.limitRows ? ` LIMIT ${params.limitRows}` : ''
 
+    // [V1.7] Sequence Management
+    const seqName = this.getSequenceName(tableName)
+    // Only drop if we are essentially replacing the table (which we are)
+    await this.databaseService.exec(`DROP SEQUENCE IF EXISTS "${seqName}"`) 
+    await this.databaseService.exec(`CREATE SEQUENCE "${seqName}" START 1`)
+
     await this.databaseService.exec(`DROP TABLE IF EXISTS "${tableName}" `)
     if (sourceTableName) {
       const casted = activeCols
         .map(c => `CAST("${c.name}" AS ${c.type}) AS "${c.name}"`)
         .join(', ')
       await this.databaseService.exec(
-        `CREATE TABLE "${tableName}" AS SELECT ${casted} FROM "${sourceTableName}"${limit}`
+        `CREATE TABLE "${tableName}" AS SELECT nextval('${seqName}') AS _ws_row_id, ${casted} FROM "${sourceTableName}"${limit}`
       )
     } else {
       let reader = 'read_csv_auto'
@@ -356,9 +489,10 @@ export class FileService {
       const loadOptions =
         ext === '.parquet' ? '' : `, ${typesParam}${extraOptions}`
       await this.databaseService.exec(
-        `CREATE TABLE "${tableName}" AS SELECT ${colList} FROM ${reader}('${safeTarget}'${loadOptions})${limit}`
+        `CREATE TABLE "${tableName}" AS SELECT nextval('${seqName}') AS _ws_row_id, ${colList} FROM ${reader}('${safeTarget}'${loadOptions})${limit}`
       )
     }
+
     const count = await this.databaseService.query(
       `SELECT COUNT(*) as count FROM "${tableName}" `
     )
@@ -366,16 +500,16 @@ export class FileService {
       `PRAGMA table_info('${tableName}')`
     )
     const finalCols = await Promise.all(
-      cols.map(async (c: any) => {
-        const type = normalizeDuckDBType(c.type)
+      cols.map(async (c: TableInfoRow) => {
+        const type = normalizeDuckDBType(c.type as string)
         return {
-          name: c.name,
-          safeName: c.name,
+          name: c.name as string,
+          safeName: c.name as string,
           type: type as ColumnType,
           sampleValues: await getSampleValues(
             this.databaseService,
             tableName,
-            c.name,
+            c.name as string,
             type as ColumnType
           ),
         }
@@ -403,7 +537,7 @@ export class FileService {
     )
     for (const t of tables)
       await this.databaseService.exec(
-        `DROP TABLE IF EXISTS "${(t as any).table_name}" `
+        `DROP TABLE IF EXISTS "${(t as TableNameRow).table_name}" `
       )
     await TempFileManager.cleanupOldFiles()
   }
@@ -519,18 +653,25 @@ export class FileService {
       .filter(([_, s]) => !!s)
       .map(([t, _]) => `"${t}"`)
       .join(' , ')
+
+    // [V1.7] Sequence Handling
+    const seqName = this.getSequenceName(targetTableName)
+
     if (uniqueKeys && uniqueKeys.length > 0) {
       if (strategy === 'replace') {
+        // Replace strategy means "Remove duplicates, then insert"
         const join = uniqueKeys
           .map(k => `"${targetTableName}"."${k}" = src."${columnMapping[k]}"`)
           .join(' AND ')
         await this.databaseService.exec(
           `DELETE FROM "${targetTableName}" WHERE EXISTS (SELECT 1 FROM ${sourceSql} AS src WHERE ${join})`
         )
+        // Insert new with nextval
         await this.databaseService.exec(
-          `INSERT INTO "${targetTableName}" (${targetCols}) SELECT ${selects} FROM ${sourceSql}`
+          `INSERT INTO "${targetTableName}" (_ws_row_id, ${targetCols}) SELECT nextval('${seqName}'), ${selects} FROM ${sourceSql}`
         )
       } else if (strategy === 'update') {
+        // Update strategy keeps original IDs, so no nextval needed
         const set = Object.keys(columnMapping)
           .filter(k => !uniqueKeys.includes(k) && columnMapping[k])
           .map(k => `"${k}" = src."${columnMapping[k]}"`)
@@ -542,24 +683,48 @@ export class FileService {
           `UPDATE "${targetTableName}" SET ${set} FROM ${sourceSql} AS src WHERE ${where}`
         )
       } else {
+        // Append (Skip Duplicates)
         const notEx = uniqueKeys
           .map(k => `tgt."${k}" = src."${columnMapping[k]}"`)
           .join(' AND ')
         await this.databaseService.exec(
-          `INSERT INTO "${targetTableName}" (${targetCols}) SELECT ${selects} FROM ${sourceSql} AS src WHERE NOT EXISTS (SELECT 1 FROM "${targetTableName}" AS tgt WHERE ${notEx})`
+          `INSERT INTO "${targetTableName}" (_ws_row_id, ${targetCols}) SELECT nextval('${seqName}'), ${selects} FROM ${sourceSql} AS src WHERE NOT EXISTS (SELECT 1 FROM "${targetTableName}" AS tgt WHERE ${notEx})`
         )
       }
-    } else
+    } else {
+      // Simple Append
       await this.databaseService.exec(
-        `INSERT INTO "${targetTableName}" (${targetCols}) SELECT ${selects} FROM ${sourceSql}`
+        `INSERT INTO "${targetTableName}" (_ws_row_id, ${targetCols}) SELECT nextval('${seqName}'), ${selects} FROM ${sourceSql}`
       )
+    }
     const count = await this.databaseService.query(
       `SELECT COUNT(*) as count FROM "${targetTableName}" `
     )
     return { rowCount: Number(count[0].count) }
   }
 
-  private async detectCsvEncoding(safePath: string): Promise<Record<string, any>> {
+  private getSequenceName(tableName: string): string {
+    return `seq_${tableName}`
+  }
+
+  // [V1.7] Cascade Deletion
+  async deleteTable(tableName: string): Promise<void> {
+    const seqName = this.getSequenceName(tableName)
+    const sidecarName = `${tableName}_ext_ai`
+    
+    // 1. Drop Sidecar
+    await this.databaseService.exec(`DROP TABLE IF EXISTS "${sidecarName}"`)
+    
+    // 2. Drop Sequence
+    await this.databaseService.exec(`DROP SEQUENCE IF EXISTS "${seqName}"`)
+    
+    // 3. Drop Main Table
+    await this.databaseService.exec(`DROP TABLE IF EXISTS "${tableName}"`)
+  }
+
+  private async detectCsvEncoding(
+    safePath: string
+  ): Promise<Record<string, unknown>> {
     const strategies = [
       { name: 'Default', options: { auto_detect: true } },
       { name: 'GBK', options: { encoding: 'GBK', auto_detect: true } },
@@ -575,7 +740,7 @@ export class FileService {
       // Currently we stick to the defines strategies.
     ]
 
-    let lastError: any
+    let lastError: unknown
 
     for (const strategy of strategies) {
       try {
@@ -587,12 +752,12 @@ export class FileService {
         await this.databaseService.query(
           `DESCRIBE SELECT * FROM read_csv_auto('${safePath}', ${optStr})`
         )
-        return strategy.options
+        return strategy.options as Record<string, unknown>
       } catch (e) {
         lastError = e
       }
     }
 
-    throw new Error(`Failed to parse CSV: ${lastError?.message || 'Unknown error'}`)
+    throw new Error(`Failed to parse CSV: ${lastError instanceof Error ? lastError.message : 'Unknown error'}`)
   }
 }

@@ -9,6 +9,90 @@ export interface ExcelProcessResult {
   error?: string
 }
 
+interface RichTextPart {
+  text: string
+}
+
+interface RichTextValue {
+  richText: RichTextPart[]
+}
+
+interface HyperlinkValue {
+  text: string
+  hyperlink: string
+}
+
+interface FormulaValue {
+  result?: ExcelJS.CellValue
+}
+
+interface ErrorValue {
+  error?: string
+}
+
+interface WorksheetReaderLike {
+  name?: string
+}
+
+type WorkbookLoadInput = Parameters<ExcelJS.Workbook['xlsx']['load']>[0]
+
+function isRichTextValue(value: unknown): value is RichTextValue {
+  return typeof value === 'object' && value !== null && 'richText' in value
+}
+
+function isHyperlinkValue(value: unknown): value is HyperlinkValue {
+  return typeof value === 'object' && value !== null && 'text' in value && 'hyperlink' in value
+}
+
+function isFormulaValue(value: unknown): value is FormulaValue {
+  return typeof value === 'object' && value !== null && 'result' in value
+}
+
+function isErrorValue(value: unknown): value is ErrorValue {
+  return typeof value === 'object' && value !== null && 'error' in value
+}
+
+function toCellString(value: unknown) {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function resolveComplexCellValue(value: ExcelJS.CellValue): ExcelJS.CellValue | string {
+  if (!value || typeof value !== 'object' || value instanceof Date) {
+    return value
+  }
+
+  if (isRichTextValue(value) && Array.isArray(value.richText)) {
+    return value.richText.map(part => part.text).join('')
+  }
+
+  if (isHyperlinkValue(value)) {
+    return value.text
+  }
+
+  if (isFormulaValue(value)) {
+    const result = value.result
+    if (result && typeof result === 'object' && !(result instanceof Date)) {
+      if (isErrorValue(result)) return result.error || ''
+      try {
+        return JSON.stringify(result)
+      } catch {
+        return String(result)
+      }
+    }
+    return result ?? ''
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function normalizeHeaders(headers: string[]): string[] {
   const counts: { [key: string]: number } = {}
   return headers.map(header => {
@@ -47,7 +131,7 @@ export function findHeaderRow(data: ExcelJS.CellValue[][]): {
     }
   }
 
-  const headers = data[headerRowIndex]?.map((h: any) => String(h || '')) || []
+  const headers = data[headerRowIndex]?.map(h => toCellString(h)) || []
   return { headerRowIndex, headers }
 }
 
@@ -98,7 +182,7 @@ export async function processExcelFileStreaming(
 
   for await (const worksheetReader of workbookReader) {
     sheetCount++
-    const sheetName = (worksheetReader as any).name
+    const sheetName = (worksheetReader as WorksheetReaderLike).name || `Sheet${sheetCount}`
 
     // Filter logic
     let shouldProcess = false
@@ -200,24 +284,7 @@ export async function processExcelFileStreaming(
 
           // Handle Rich Text / Hyperlinks
           if (val && typeof val === 'object' && !(val instanceof Date)) {
-            if ('richText' in val && Array.isArray((val as any).richText)) {
-              val = (val as any).richText.map((t: any) => t.text).join('')
-            } else if ('text' in val && 'hyperlink' in val) {
-              val = (val as any).text
-            } else if ('result' in val) {
-              val = (val as any).result
-              if (val && typeof val === 'object' && !(val instanceof Date)) {
-                if ('error' in val) val = (val as any).error
-                else val = JSON.stringify(val)
-              }
-            } else {
-              // Fallback
-              try {
-                val = JSON.stringify(val)
-              } catch {
-                val = String(val)
-              }
-            }
+            val = resolveComplexCellValue(val)
           }
           values[i - 1] = val
         }
@@ -319,13 +386,13 @@ export async function processExcelFileStreaming(
           headers: normalizedHeaders,
         })
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(`Error processing sheet ${sheetName}:`, e)
       results.push({
         sheetName,
         csvFilePath: '',
         rowCount: 0,
-        error: e.message,
+        error: getErrorMessage(e),
       })
     }
   }
@@ -344,7 +411,7 @@ export async function processExcelBufferExcelJS(
   onlyHeaders: boolean = false
 ): Promise<{ results: ExcelProcessResult[]; allSheetsCount: number }> {
   const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(fileBuffer as any)
+  await workbook.xlsx.load(fileBuffer as unknown as WorkbookLoadInput)
 
   // After the most expensive part (load), signal that we are halfway
   if (onProgress) onProgress(0, true) // Intermediate progress
@@ -368,7 +435,7 @@ export async function processExcelBufferExcelJS(
   for (const worksheet of sheetsToProcess) {
     try {
       // 1. Extract data matrix from worksheet
-      const data: any[][] = []
+      const data: ExcelJS.CellValue[][] = []
       const totalRows = worksheet.rowCount
 
       // Pre-check for merges to optimize
@@ -377,11 +444,11 @@ export async function processExcelBufferExcelJS(
       worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
         if (onlyHeaders && rowNumber > 50) return // Limit reading for inspect
 
-        const filledRowData: any[] = []
+        const filledRowData: ExcelJS.CellValue[] = []
 
         if (!hasMerges && Array.isArray(row.values)) {
           // FAST PATH: No merges, use values directly
-          const values = row.values as any[]
+          const values = row.values as ExcelJS.CellValue[]
           // ExcelJS values are 1-based (index 0 is undefined)
           for (let i = 1; i < values.length; i++) {
             let val = values[i]
@@ -390,17 +457,10 @@ export async function processExcelBufferExcelJS(
             if (val && typeof val === 'object' && !(val instanceof Date)) {
               // If it's an object, we might need to inspect it or use getCell to be safe
               // But getCell is slow. Let's try to extract common patterns first.
-              if ('richText' in val) {
-                val = (val as any).richText.map((t: any) => t.text).join('')
-              } else if ('text' in val && 'hyperlink' in val) {
-                val = (val as any).text
-              } else if ('result' in val) {
-                val = (val as any).result
-                if (val && typeof val === 'object' && !(val instanceof Date)) {
-                  val = (val as any).error || JSON.stringify(val)
-                }
+              const normalized = resolveComplexCellValue(val)
+              if (typeof normalized === 'string' || normalized instanceof Date || typeof normalized !== 'object') {
+                val = normalized
               } else {
-                // Fallback to getCell for unknown objects
                 const cell = row.getCell(i)
                 val = cell.value
               }
@@ -419,23 +479,7 @@ export async function processExcelBufferExcelJS(
 
             // Handle Rich Text / Hyperlinks
             if (val && typeof val === 'object' && !(val instanceof Date)) {
-              if ('richText' in val && Array.isArray((val as any).richText)) {
-                val = (val as any).richText.map((t: any) => t.text).join('')
-              } else if ('text' in val && 'hyperlink' in val) {
-                val = (val as any).text
-              } else if ('result' in val) {
-                val = (val as any).result
-                if (val && typeof val === 'object' && !(val instanceof Date)) {
-                  if ('error' in val) val = (val as any).error
-                  else val = JSON.stringify(val)
-                }
-              } else {
-                try {
-                  val = JSON.stringify(val)
-                } catch {
-                  val = String(val)
-                }
-              }
+              val = resolveComplexCellValue(val)
             }
             filledRowData[colNumber - 1] = val
           }
@@ -535,8 +579,8 @@ export async function processExcelBufferExcelJS(
         csvData,
         headers: normalizedHeaders,
       })
-    } catch (e: any) {
-      results.push({ sheetName: worksheet.name, csvData: '', error: e.message })
+    } catch (e: unknown) {
+      results.push({ sheetName: worksheet.name, csvData: '', error: getErrorMessage(e) })
     }
   }
 

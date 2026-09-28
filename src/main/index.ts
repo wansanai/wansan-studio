@@ -11,7 +11,10 @@ import { AIService } from './services/ai-service' // Import AIService
 import { dbClient } from './services/db-service/client'
 import { ProjectManager } from './services/project-manager'
 import { DBConnectorService } from './services/connector-service'
+import { BatchProcessor } from './services/batch-processor'
+import { FileService } from './services/file'
 import { registerProjectHandlers } from './ipc/project-ipc'
+import { registerHandler } from './utils/ipc-helper'
 import { createApplicationMenu } from './config/menu'
 import { authService } from './services/auth-service'
 import { setupFetchLogger } from './utils/fetch-logger'
@@ -80,6 +83,15 @@ class WansanApp {
     // Initialize Project Manager
     this.projectManager = new ProjectManager(this.databaseService)
 
+    // Initialize Batch Processor [V1.7]
+    const fileServiceInstance = new FileService(this.databaseService)
+    const batchProcessor = new BatchProcessor(
+      this.databaseService,
+      this.aiService,
+      fileServiceInstance
+    )
+    this.aiService.setBatchProcessor(batchProcessor)
+
     // 设置 IPC 通信
     this.setupIPC()
 
@@ -90,7 +102,7 @@ class WansanApp {
     this.fetchRemoteConfig()
 
     // Handle Language Change
-    ipcMain.handle('app:set-language', (_event, lang: 'en' | 'zh') => {
+    registerHandler('app.setLanguage', async (_event, lang) => {
       if (this.mainWindow) {
         createApplicationMenu(this.mainWindow, lang)
       }
@@ -244,7 +256,8 @@ class WansanApp {
     const { fileService } = setupIPC(
       this.databaseService,
       this.aiService,
-      this.connectorService
+      this.connectorService,
+      this.projectManager
     )
 
     // Cleanup orphaned temp files from previous sessions on boot

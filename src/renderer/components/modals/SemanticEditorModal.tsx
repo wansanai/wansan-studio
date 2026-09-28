@@ -19,7 +19,7 @@ import { Label } from '../ui/label'
 import { Textarea } from '../ui/textarea'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { MessageSquare, Plus, Trash2 } from 'lucide-react'
+import { MessageSquare, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { ColumnSchema } from '@shared/types'
 
 const BUSINESS_TYPES = [
@@ -42,6 +42,8 @@ interface SemanticEditorModalProps {
     aliases: string[]
     description: string
     businessType: string
+    usageType?: 'Dimension' | 'Measure' | 'Attribute'
+    defaultAggregation?: 'SUM' | 'AVG' | 'COUNT' | 'MAX' | 'NONE'
   }) => void
   column: ColumnSchema | null
 }
@@ -53,17 +55,21 @@ export function SemanticEditorModal({
   column,
 }: SemanticEditorModalProps) {
   const { t } = useTranslation('common')
-  
+
   const [editAliases, setEditAliases] = useState<string[]>([])
   const [newAliasInput, setNewAliasInput] = useState('')
   const [editDesc, setEditDescription] = useState('')
   const [editBusinessType, setEditBusinessType] = useState('')
+  const [editUsageType, setEditUsageType] = useState<'Dimension' | 'Measure' | 'Attribute'>('Attribute')
+  const [editAggregation, setEditAggregation] = useState<'SUM' | 'AVG' | 'COUNT' | 'MAX' | 'NONE'>('NONE')
 
   useEffect(() => {
     if (column) {
       setEditAliases(column.semantic?.aliases || [])
       setEditDescription(column.semantic?.description || '')
       setEditBusinessType(column.semantic?.businessType || 'Other')
+      setEditUsageType(column.semantic?.usageType || 'Attribute')
+      setEditAggregation(column.semantic?.defaultAggregation || 'NONE')
       setNewAliasInput('')
     }
   }, [column, isOpen])
@@ -85,6 +91,8 @@ export function SemanticEditorModal({
       aliases: editAliases,
       description: editDesc,
       businessType: editBusinessType,
+      usageType: editUsageType,
+      defaultAggregation: editAggregation
     })
   }
 
@@ -100,7 +108,7 @@ export function SemanticEditorModal({
             {t('edit_semantic_desc')}
           </p>
         </DialogHeader>
-        <div className="space-y-6 py-4">
+        <div className="space-y-6 py-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
           <div className="space-y-3">
             <Label className="text-xs font-bold uppercase tracking-widest text-zinc-400">
               {t('field_alias')}
@@ -141,6 +149,49 @@ export function SemanticEditorModal({
               </Button>
             </div>
           </div>
+
+          <div className="grid grid-cols-2 gap-4">
+             <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+                  {t('usage_type', 'Usage')}
+                </Label>
+                <Select
+                  value={editUsageType}
+                  onValueChange={(v: any) => setEditUsageType(v)}
+                >
+                  <SelectTrigger className="rounded-xl border-zinc-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-none shadow-xl">
+                    <SelectItem value="Dimension">Dimension</SelectItem>
+                    <SelectItem value="Measure">Measure</SelectItem>
+                    <SelectItem value="Attribute">Attribute</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+                  {t('aggregation', 'Aggregation')}
+                </Label>
+                <Select
+                  value={editAggregation}
+                  onValueChange={(v: any) => setEditAggregation(v)}
+                >
+                  <SelectTrigger className="rounded-xl border-zinc-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-none shadow-xl">
+                    <SelectItem value="SUM">SUM</SelectItem>
+                    <SelectItem value="AVG">AVG</SelectItem>
+                    <SelectItem value="COUNT">COUNT</SelectItem>
+                    <SelectItem value="MAX">MAX</SelectItem>
+                    <SelectItem value="NONE">NONE</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+          </div>
+
           <div className="space-y-2">
             <Label className="text-xs font-bold uppercase tracking-widest text-zinc-400">
               {t('format')}
@@ -151,7 +202,7 @@ export function SemanticEditorModal({
             >
               <SelectTrigger className="rounded-xl border-zinc-100">
                 <div className="flex items-center truncate">
-                  {editBusinessType 
+                  {editBusinessType
                     ? t(`business_type.${editBusinessType.toLowerCase()}`, editBusinessType)
                     : <SelectValue placeholder={t('select_type', 'Select type...')} />
                   }
@@ -166,6 +217,7 @@ export function SemanticEditorModal({
               </SelectContent>
             </Select>
           </div>
+
           <div className="space-y-2">
             <Label className="text-xs font-bold uppercase tracking-widest text-zinc-400">
               {t('field_description')}
@@ -177,11 +229,26 @@ export function SemanticEditorModal({
                 'field_description_placeholder',
                 'Describe the logic or meaning of this column...'
               )}
-              className="rounded-xl border-zinc-100 min-h-[100px] focus:ring-indigo-500"
+              className="rounded-xl border-zinc-100 min-h-[80px] focus:ring-indigo-500"
             />
           </div>
+
+          {column?.semantic?.extractionHints && column.semantic.extractionHints.length > 0 && (
+            <div className="space-y-3 bg-purple-50/50 p-4 rounded-2xl border border-purple-100">
+               <Label className="text-[10px] font-black uppercase tracking-widest text-purple-400 flex items-center gap-2">
+                 <Sparkles className="w-3 h-3 fill-current" />
+                 AI Extraction Suggestions
+               </Label>
+               {column.semantic.extractionHints.map((hint, i) => (
+                 <div key={i} className="flex flex-col gap-1">
+                    <div className="text-xs font-bold text-purple-900">{hint.targetColumnName}</div>
+                    <div className="text-[10px] text-purple-600/70 leading-relaxed italic">{hint.reason}</div>
+                 </div>
+               ))}
+            </div>
+          )}
         </div>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 pt-4">
           <Button
             variant="ghost"
             onClick={onClose}

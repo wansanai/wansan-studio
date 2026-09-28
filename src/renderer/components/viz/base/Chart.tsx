@@ -4,11 +4,16 @@ import type { EChartsOption, EChartsType } from 'echarts'
 import { applyWansanTheme } from '../../../lib/echarts-theme'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
+type AxisDataItem = { value?: unknown }
+type SeriesDataItem = { name?: unknown }
+type AxisOptionLike = { type?: string; data?: unknown[] }
+type SeriesOptionLike = { data?: unknown[] }
+
 interface ReportChartProps {
   option: EChartsOption
   className?: string
   style?: React.CSSProperties
-  onChartClick?: (params: any) => void
+  onChartClick?: (params: unknown) => void
   highlightedItems?: string[]
   showLabels?: boolean
 }
@@ -52,7 +57,7 @@ export function Chart({
     const instance = instanceRef.current
     if (!instance || !onChartClick) return
 
-    const handler = (params: any) => {
+    const handler = (params: unknown) => {
       onChartClick(params)
     }
 
@@ -104,7 +109,7 @@ export function Chart({
     // We search for the indices of matching items to perform a more reliable highlight.
     const targetIndices: number[] = []
 
-    const isMatch = (val: any) => {
+    const isMatch = (val: unknown) => {
       if (val === null || val === undefined) return false
       const strVal = String(val).toLowerCase()
       return highlightedItems.some(highlight => {
@@ -122,11 +127,14 @@ export function Chart({
       ? currentOption.xAxis[0]
       : currentOption.xAxis
     
-    const xAxisData = (xAxis as any)?.data
+    const xAxisData = (xAxis as AxisOptionLike | undefined)?.data
     
     if (xAxis && (xAxis.type === 'category' || !xAxis.type) && Array.isArray(xAxisData)) {
-      xAxisData.forEach((d: any, idx: number) => {
-        const val = (typeof d === 'object' && d !== null && 'value' in d) ? d.value : d
+      xAxisData.forEach((datum, idx: number) => {
+        const val =
+          typeof datum === 'object' && datum !== null && 'value' in datum
+            ? (datum as AxisDataItem).value
+            : datum
         if (isMatch(val)) {
           targetIndices.push(idx)
         }
@@ -134,10 +142,13 @@ export function Chart({
     }
     // B. Check Series Data (e.g. Pie chart names)
     else {
-      series.forEach((s: any) => {
-        if (Array.isArray(s.data)) {
-          s.data.forEach((d: any, idx: number) => {
-            const name = (typeof d === 'object' && d !== null && 'name' in d) ? d.name : null
+      (series as SeriesOptionLike[]).forEach((seriesItem) => {
+        if (Array.isArray(seriesItem.data)) {
+          seriesItem.data.forEach((datum, idx: number) => {
+            const name =
+              typeof datum === 'object' && datum !== null && 'name' in datum
+                ? (datum as SeriesDataItem).name
+                : null
             if (name && isMatch(name)) {
               targetIndices.push(idx)
             }

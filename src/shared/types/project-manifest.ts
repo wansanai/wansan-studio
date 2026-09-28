@@ -1,4 +1,11 @@
-import { DataSourceConfig, SmartMetric, TableRelation } from '../types'
+import {
+  ColumnSemantic,
+  DataSourceConfig,
+  SmartMetric,
+  TableRelation,
+} from '../types'
+import type { Session, TableView, ViewMode } from './project'
+import type { ReportData } from './dashboard'
 
 export interface AssetManifest {
   id: string
@@ -20,12 +27,12 @@ export interface AssetManifest {
     name: string
     type: string
     safeName: string
-    sampleValues?: any[]
+    sampleValues?: unknown[]
     nullable?: boolean
     isKey?: boolean
     isPrimaryKey?: boolean
     alias?: string
-    semantic?: any // ColumnSemantic
+    semantic?: ColumnSemantic
   }>
 }
 
@@ -39,25 +46,51 @@ export interface ProjectManifest {
     engine: 'native'
   }
   assets: AssetManifest[]
+  tableViews?: Record<string, TableView[]>
   settings: {
     theme?: 'light' | 'dark'
   }
 }
 
+export interface TableSemantic {
+  description?: string
+  /** Column-level business metadata, keyed by original column name */
+  columns: Record<string, ColumnSemantic>
+  /** Metrics defined or suggested for this table */
+  smartMetrics: SmartMetric[]
+  /** Relationships where this table is the source */
+  relations: TableRelation[]
+}
+
 export interface SemanticLayer {
-  relations: Record<string, TableRelation[]> // Keyed by Source File ID
-  smartMetrics: Record<string, SmartMetric[]>
+  /** Keyed by File ID */
+  tables: Record<string, TableSemantic>
+  /** Global business rules/context (Domain Memory) */
+  domainRules?: string[]
+  /** [V1.7] AI generated suggested prompts for empty state */
+  suggestedPrompts?: string[]
+  /** Legacy fields for backward compatibility during migration */
+  relations?: Record<string, TableRelation[]>
+  smartMetrics?: Record<string, SmartMetric[]>
+}
+
+export interface ProjectSessionState {
+  sessions?: Session[]
+  activeSessionId?: string
+  activeView?: ViewMode
+  activeFileId?: string | null
+  widgetRegistry?: Record<string, ReportData>
 }
 
 export interface ProjectLoadResult {
   path: string
   manifest: ProjectManifest
   semantic: SemanticLayer
-  session: any
+  session: ProjectSessionState
 }
 
 export interface ProjectSavePayload {
   manifest?: Partial<ProjectManifest>
   semantic?: Partial<SemanticLayer>
-  session?: any
+  session?: ProjectSessionState
 }

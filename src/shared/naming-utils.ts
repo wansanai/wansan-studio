@@ -67,3 +67,17 @@ export function sanitizeFilename(name: string, fallback: string = 'file'): strin
   // Replace illegal filename characters with underscore
   return name.replace(/[\\/?*:!|"<>.]/g, '_') || fallback
 }
+
+/**
+ * Standard naming for sidecar tables (AI augmentation, manual corrections, etc.)
+ */
+export function getSidecarTableName(tableName: string): string {
+  return `${tableName}__ext`
+}
+
+/**
+ * Standard naming for logical views (Unified schema for AI and Grid)
+ */
+export function getLogicalViewName(tableName: string): string {
+  return `v_${tableName}`
+}

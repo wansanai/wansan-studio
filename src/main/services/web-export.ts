@@ -3,11 +3,18 @@ import fs from 'fs-extra'
 import path from 'path'
 import { isDev } from '../utils/env'
 
+type ExportRuntimeSnapshot = {
+  workbench?: Record<string, unknown>
+  project?: Record<string, unknown>
+  ui?: Record<string, unknown>
+  settings?: Record<string, unknown>
+}
+
 export async function exportWebReport(
-  _aiService: any,
-  widgets: any[], // Denormalized widgets with reportData
+  _aiService: unknown,
+  widgets: unknown[],
   config: { title: string; theme: string; language?: 'en' | 'zh' },
-  fullSnapshot?: any
+  fullSnapshot?: ExportRuntimeSnapshot
 ) {
   const { title: reportTitle, language = 'en' } = config
 

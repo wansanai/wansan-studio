@@ -2,13 +2,37 @@ import path from 'path'
 import fs from 'fs-extra'
 import { v4 as uuidv4 } from 'uuid'
 import { NativeDatabaseService } from './native-db-service'
+import { MigrationService } from './migration-service'
 
 import {
   ProjectManifest,
   ProjectLoadResult,
   ProjectSavePayload,
+  ProjectSessionState,
   SemanticLayer,
+  TableSemantic,
 } from '../../shared/types/project-manifest'
+
+type AssetWithSemanticState = ProjectManifest['assets'][number] & {
+  description?: string
+  smartMetrics?: TableSemantic['smartMetrics']
+  relations?: TableSemantic['relations']
+}
+
+type ManifestFileState = Partial<ProjectManifest> & {
+  meta?: Partial<ProjectManifest['meta']>
+}
+
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function getErrorCode(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
 
 export class ProjectManager {
   private currentProjectPath: string | null = null
@@ -40,6 +64,10 @@ export class ProjectManager {
     console.log('[ProjectManager] Pending saves cleared (or timed out).')
   }
 
+  public getCurrentProjectPath(): string | null {
+    return this.currentProjectPath
+  }
+
   async createProject(name: string, location: string): Promise<string> {
     const projectId = uuidv4()
     const projectDirName = `${name}.wansan`
@@ -68,11 +96,11 @@ export class ProjectManager {
     }
 
     const defaultSemantic: SemanticLayer = {
-      relations: {},
-      smartMetrics: {},
+      tables: {},
+      domainRules: []
     }
 
-    const defaultSession = {}
+    const defaultSession: ProjectSessionState = {}
 
     await this.atomicWriteJSON(path.join(projectPath, 'wansan.json'), defaultManifest)
     await this.atomicWriteJSON(path.join(projectPath, 'semantic.json'), defaultSemantic)
@@ -106,13 +134,13 @@ export class ProjectManager {
         try {
           process.kill(pid, 0) // This throws if pid doesn't exist
           throw new Error(`Project is already open by process ${pid}`)
-        } catch (e: any) {
-          if (e.code === 'EPERM') {
+        } catch (e: unknown) {
+          if (getErrorCode(e) === 'EPERM') {
             throw new Error(
               `Project is locked by process ${pid} (Permission Denied to check)`
             )
           }
-          if (e.message.includes('Project is already open')) {
+          if (getErrorMessage(e).includes('Project is already open')) {
             throw e
           }
           // Process not found, lock is stale. Continue.
@@ -120,8 +148,8 @@ export class ProjectManager {
             `[ProjectManager] Found stale lock for PID ${pid}. Taking over.`
           )
         }
-      } catch (err: any) {
-        if (err.message.includes('Project is already open')) throw err
+      } catch (err: unknown) {
+        if (getErrorMessage(err).includes('Project is already open')) throw err
         // Else ignore parse error or other issues
       }
     }
@@ -133,14 +161,18 @@ export class ProjectManager {
     const dbPath = path.join(projectPath, 'source.duckdb')
     await this.nativeDB.initialize(dbPath)
 
+    // [V1.7] Data Structure Migration
+    const migration = new MigrationService(this.nativeDB)
+    await migration.upgradeToV17()
+
     // 2. Read Meta Data
     let manifest: ProjectManifest
     try {
       manifest = await this.retryWithBackoff(() => fs.readJSON(manifestPath))
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Only repair if file is missing (ENOENT) or explicitly corrupted (SyntaxError)
       // If it's a lock issue (EBUSY, EPERM), we should FAIL, not overwrite.
-      if (e.code === 'ENOENT' || e instanceof SyntaxError) {
+      if (getErrorCode(e) === 'ENOENT' || e instanceof SyntaxError) {
         console.warn(
           `[ProjectManager] wansan.json is corrupted or empty. Attempting repair...`,
           e
@@ -167,31 +199,31 @@ export class ProjectManager {
           console.error('Failed to write repaired wansan.json', writeErr)
         }
       } else {
-        throw new Error(`Failed to read wansan.json: ${e.message}`)
+        throw new Error(`Failed to read wansan.json: ${getErrorMessage(e)}`)
       }
     }
 
     let semantic: SemanticLayer
     try {
       semantic = await this.retryWithBackoff(() => fs.readJSON(path.join(projectPath, 'semantic.json')))
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e: unknown) {
+      if (getErrorCode(e) === 'ENOENT') {
         console.warn('semantic.json missing, using default')
-        semantic = { relations: {}, smartMetrics: {} }
+        semantic = { tables: {}, relations: {}, smartMetrics: {} }
       } else if (e instanceof SyntaxError) {
         console.error('semantic.json corrupted, using default (DATA LOSS RISK)', e)
-        semantic = { relations: {}, smartMetrics: {} }
+        semantic = { tables: {}, relations: {}, smartMetrics: {} }
       } else {
         // EBUSY or other system error - DO NOT OVERWRITE
-        throw new Error(`Failed to read semantic.json: ${e.message}`)
+        throw new Error(`Failed to read semantic.json: ${getErrorMessage(e)}`)
       }
     }
 
-    let session: any
+    let session: ProjectSessionState
     try {
       session = await this.retryWithBackoff(() => fs.readJSON(path.join(projectPath, 'session.json')))
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e: unknown) {
+      if (getErrorCode(e) === 'ENOENT') {
         console.warn('session.json missing, using default')
         session = {}
       } else if (e instanceof SyntaxError) {
@@ -199,15 +231,68 @@ export class ProjectManager {
         session = {}
       } else {
         // EBUSY or other system error - DO NOT OVERWRITE
-        throw new Error(`Failed to read session.json: ${e.message}`)
+        throw new Error(`Failed to read session.json: ${getErrorMessage(e)}`)
       }
     }
 
+    // [V1.7] Hydration: Merge Physical (manifest) and Logical (semantic) data
+    const hydrated = this.hydrateProject(manifest, semantic)
+
     return {
       path: projectPath,
-      manifest,
-      semantic,
+      manifest: hydrated.manifest,
+      semantic: hydrated.semantic,
       session,
+    }
+  }
+
+  /**
+   * [V1.7] Hydration Layer
+   * Merges legacy semantics from wansan.json and various formats from semantic.json 
+   * into a unified manifest for the UI.
+   */
+  private hydrateProject(manifest: ProjectManifest, semantic: SemanticLayer): { manifest: ProjectManifest, semantic: SemanticLayer } {
+    const tables: Record<string, TableSemantic> = semantic.tables || {}
+
+    // 1. Migrate legacy flat semantic structures
+    if (semantic.relations && Object.keys(semantic.relations).length > 0) {
+      Object.entries(semantic.relations).forEach(([fileId, rels]) => {
+        if (!tables[fileId]) tables[fileId] = { columns: {}, smartMetrics: [], relations: [] }
+        tables[fileId].relations = [...(tables[fileId].relations || []), ...rels]
+      })
+    }
+    if (semantic.smartMetrics && Object.keys(semantic.smartMetrics).length > 0) {
+      Object.entries(semantic.smartMetrics).forEach(([fileId, metrics]) => {
+        if (!tables[fileId]) tables[fileId] = { columns: {}, smartMetrics: [], relations: [] }
+        tables[fileId].smartMetrics = [...(tables[fileId].smartMetrics || []), ...metrics]
+      })
+    }
+
+    // 2. Attach semantic data to manifest assets for UI convenience
+    manifest.assets = manifest.assets.map(asset => {
+      const tableSemantic: TableSemantic = tables[asset.id] || { columns: {}, smartMetrics: [], relations: [] }
+      
+      // Migrate legacy column.semantic from wansan.json if present
+      asset.columns = asset.columns.map(col => {
+        const existingSemantic = col.semantic
+        const centralizedSemantic = tableSemantic.columns[col.name]
+        return {
+          ...col,
+          semantic: centralizedSemantic || existingSemantic
+        }
+      })
+
+      return {
+        ...asset,
+        smartMetrics: tableSemantic.smartMetrics,
+        relations: tableSemantic.relations,
+        description: tableSemantic.description || asset.name
+      }
+    })
+
+    return { 
+      manifest, 
+      semantic: { ...semantic, tables } 
     }
   }
 
@@ -234,46 +319,60 @@ export class ProjectManager {
       console.warn('[ProjectManager] Checkpoint failed during save:', err)
     })
 
+    // [V1.7] Dehydration: Separate UI-friendly manifest into Physical and Logical files
+    const { physicalManifest, logicalSemantic } = this.dehydrateProject(data)
+
     const tasks = []
-    if (data.manifest) {
+    if (physicalManifest) {
       const manifestPath = path.join(targetPath, 'wansan.json')
       let current = {}
       try {
         current = await this.retryWithBackoff(() => fs.readJSON(manifestPath))
-      } catch (e: any) {
-        if (e.code !== 'ENOENT') {
-           console.error(`[ProjectManager] Read failed for manifest during save (Code: ${e.code}). Aborting save to prevent data loss.`)
+      } catch (e: unknown) {
+        if (getErrorCode(e) !== 'ENOENT') {
+           console.error(`[ProjectManager] Read failed for manifest during save (Code: ${getErrorCode(e)}). Aborting save to prevent data loss.`)
            throw e
         }
       }
-      // Deep merge meta is tricky, but here we expect data.manifest to be partial updates.
-      // We explicitly merge meta.
+      
       const newMeta = {
-        ...(current as any).meta,
-        ...(data.manifest.meta || {}),
+        ...(current as ManifestFileState).meta,
+        ...(physicalManifest.meta || {}),
         updatedAt: Date.now(),
       }
 
       const updated = {
         ...current,
-        ...data.manifest,
+        ...physicalManifest,
         meta: newMeta,
       }
       tasks.push(this.atomicWriteJSON(manifestPath, updated))
     }
 
-    if (data.semantic) {
+    if (logicalSemantic) {
       const semanticPath = path.join(targetPath, 'semantic.json')
-      let current = { relations: [], smartMetrics: {} }
+      let current = { tables: {}, domainRules: [] }
       try {
         current = await this.retryWithBackoff(() => fs.readJSON(semanticPath))
-      } catch (e: any) {
-        if (e.code !== 'ENOENT') {
-           console.error(`[ProjectManager] Read failed for semantic during save (Code: ${e.code}). Aborting save to prevent data loss.`)
+      } catch (e: unknown) {
+        if (getErrorCode(e) !== 'ENOENT') {
+           console.error(`[ProjectManager] Read failed for semantic during save (Code: ${getErrorCode(e)}). Aborting save to prevent data loss.`)
            throw e
         }
       }
-      const updated = { ...current, ...data.semantic }
+      // Merge updates into tables
+      const updatedTables = {
+        ...(current.tables || {}),
+        ...(logicalSemantic.tables || {})
+      }
+      const updated = { 
+        ...current, 
+        ...logicalSemantic, 
+        tables: updatedTables,
+        // Remove legacy fields if they exist
+        relations: undefined,
+        smartMetrics: undefined
+      }
       tasks.push(this.atomicWriteJSON(semanticPath, updated))
     }
 
@@ -293,14 +392,68 @@ export class ProjectManager {
   }
 
   /**
-   * Safe atomic write: Write to .tmp then rename.
-   * Prevents empty files if write fails or process crashes.
+   * [V1.7] Dehydration Layer
+   * Strips semantic data from the UI-facing manifest before saving to physical storage.
    */
-  private async atomicWriteJSON(filePath: string, data: any): Promise<void> {
-    const tmpPath = `${filePath}.tmp`
+  private dehydrateProject(data: ProjectSavePayload): { physicalManifest?: Partial<ProjectManifest>, logicalSemantic?: Partial<SemanticLayer> } {
+    if (!data.manifest) return { physicalManifest: data.manifest, logicalSemantic: data.semantic }
+
+    const tables: Record<string, TableSemantic> = {}
+    
+    // Process assets to extract semantics
+    const cleanAssets = data.manifest.assets?.map(asset => {
+      const semanticAsset = asset as AssetWithSemanticState
+      // Extract to semantic layer
+      tables[asset.id] = {
+        description: semanticAsset.description,
+        smartMetrics: semanticAsset.smartMetrics || [],
+        relations: semanticAsset.relations || [],
+        columns: {}
+      }
+
+      // Extract column-level semantics
+      const cleanColumns = asset.columns.map(col => {
+        if (col.semantic) {
+          tables[asset.id].columns[col.name] = col.semantic
+        }
+        // Remove semantic from physical manifest
+        const { semantic: _semantic, ...physicalCol } = col
+        return physicalCol
+      })
+
+      return {
+        ...asset,
+        columns: cleanColumns,
+        // Remove logical fields from physical asset
+        smartMetrics: undefined,
+        relations: undefined,
+        description: undefined
+      }
+    })
+
+    return {
+      physicalManifest: {
+        ...data.manifest,
+        assets: cleanAssets
+      },
+      logicalSemantic: {
+        ...data.semantic,
+        tables
+      }
+    }
+  }
+
+  /**
+   * Safe atomic write: Write to unique .tmp then rename.
+   * Prevents empty files if write fails or process crashes.
+   * Using unique tmp name prevents race conditions between concurrent saves of the same file.
+   */
+  private async atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
+    const tmpPath = `${filePath}.${uuidv4().slice(0, 8)}.tmp`
     try {
       await fs.writeJSON(tmpPath, data, { spaces: 2 })
-      await fs.move(tmpPath, filePath, { overwrite: true })
+      // fs.rename is atomic on most systems (POSIX and Windows within same drive)
+      await fs.rename(tmpPath, filePath)
     } catch (error) {
       console.error(`[ProjectManager] Atomic write failed for ${filePath}`, error)
       // Try to clean up tmp file if it exists
@@ -339,9 +492,10 @@ export class ProjectManager {
   ): Promise<T> {
     try {
       return await operation()
-    } catch (err: any) {
-      if (retries > 0 && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES')) {
-        console.warn(`[ProjectManager] Transient error ${err.code}, retrying in ${delay}ms... (${retries} left)`)
+    } catch (err: unknown) {
+      const errorCode = getErrorCode(err)
+      if (retries > 0 && (errorCode === 'EBUSY' || errorCode === 'EPERM' || errorCode === 'EACCES')) {
+        console.warn(`[ProjectManager] Transient error ${errorCode}, retrying in ${delay}ms... (${retries} left)`)
         await new Promise(resolve => setTimeout(resolve, delay))
         return this.retryWithBackoff(operation, retries - 1, delay * 2)
       }

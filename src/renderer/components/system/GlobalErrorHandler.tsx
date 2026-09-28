@@ -8,6 +8,14 @@ export function GlobalErrorHandler() {
   useEffect(() => {
     // 1. JS Errors
     const handleError = (event: ErrorEvent) => {
+      // [FIX] Ignore benign ResizeObserver notifications loop errors
+      if (
+        event.message === 'ResizeObserver loop limit exceeded' ||
+        event.message === 'ResizeObserver loop completed with undelivered notifications.'
+      ) {
+        return
+      }
+
       if (isDev) {
         console.error('[Global Error Handler] Caught error:', {
           message: event.message,

@@ -13,13 +13,13 @@ export type DBRequestType =
 export interface DBRequest {
   reqId: string
   type: DBRequestType
-  payload?: any
+  payload?: unknown
 }
 
 export interface DBResponse {
   reqId: string
   success: boolean
-  data?: any
+  data?: unknown
   error?: string
-  meta?: any
+  meta?: unknown
 }

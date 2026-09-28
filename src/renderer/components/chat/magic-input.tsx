@@ -99,7 +99,7 @@ export function MagicInput({
   // 4. Initialize local state when session changes
   useEffect(() => {
     setValue(activeSession?.inputDraft ?? '')
-  }, [activeSessionId])
+  }, [activeSessionId, activeSession?.inputDraft])
 
   const [cursorPosition, setCursorPosition] = useState(0)
   const [mention, setMention] = useState<MentionState>({ active: false })
@@ -195,11 +195,11 @@ export function MagicInput({
         const sessionTitle = sanitizeFilename(activeSession?.title, 'Chat')
         const fileName = `${sessionTitle}_Export_${new Date().toISOString().slice(0, 10)}.md`
 
-        const result = await window.electronAPI.saveFile(
+        const result = await window.electronAPI.saveFile({
           content,
-          'md',
-          fileName
-        )
+          extension: 'md',
+          name: fileName
+        })
 
         if (result.success && result.data) {
           const filePath = result.data as string
@@ -448,13 +448,15 @@ export function MagicInput({
     t,
     resetChat,
     addToast,
-    messages,
     handleExportMarkdown,
+    handleExportExcel,
     isActivated,
     setInputDraft,
     tCommon,
     refreshSessionWidgets,
     setRefreshing,
+    openSqlLab,
+    addManualSqlMessage,
   ])
 
   const filteredCommandPrompts = useMemo(() => {

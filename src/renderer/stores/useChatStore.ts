@@ -330,14 +330,14 @@ const sendMessage = async (
     const suggestionCount = useSettingsStore.getState().suggestionCount
 
     const aiStartTime = Date.now()
-    const planResponse = await window.electronAPI.askAI(
-      resolvedPrompt,
-      resolvedSchemas,
+    const planResponse = await window.electronAPI.askAI({
+      userQuery: resolvedPrompt,
+      schemas: resolvedSchemas,
       context,
       language,
-      combinedRules,
-      suggestionCount
-    )
+      domainRules: combinedRules,
+      suggestionCount,
+    })
     const aiLatency = Date.now() - aiStartTime
 
     if (abortController.signal.aborted)
@@ -542,14 +542,14 @@ const retryMessage = async (messageId: string, originalQuery: string) => {
     const suggestionCount = useSettingsStore.getState().suggestionCount
 
     const aiStartTime = Date.now()
-    const planResponse = await window.electronAPI.askAI(
-      resolvedPrompt,
+    const planResponse = await window.electronAPI.askAI({
+      userQuery: resolvedPrompt,
       schemas,
       context,
       language,
-      combinedRules,
-      suggestionCount
-    )
+      domainRules: combinedRules,
+      suggestionCount,
+    })
     const aiLatency = Date.now() - aiStartTime
 
     if (abortController.signal.aborted)
@@ -727,12 +727,12 @@ const autoFixMessage = async (
     const projectRules = useProjectStore.getState().domainRules || []
     const combinedRules = [...globalRules, ...projectRules]
 
-    const fixResult = await window.electronAPI.fixSQL(
-      sqlToFix,
+    const fixResult = await window.electronAPI.fixSQL({
+      originalSql: sqlToFix,
       error,
       schemas,
-      combinedRules
-    )
+      domainRules: combinedRules,
+    })
     if (!fixResult.success || !fixResult.data)
       throw new Error(
         fixResult.error || i18n.t('error_failed_to_fix_sql', { ns: 'chat' })

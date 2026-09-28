@@ -53,7 +53,7 @@ export function extractJSON(rawContent: string): string {
  * Safely parses JSON returned by AI using the standard JSON.parse.
  * For BigInt support, use extractJSON() combined with your custom parse().
  */
-export function parseAIResponse<T>(rawContent: any): T {
+export function parseAIResponse<T>(rawContent: unknown): T {
   if (typeof rawContent !== 'string') {
     // If it's already an object, assume it's already parsed
     if (typeof rawContent === 'object' && rawContent !== null) {

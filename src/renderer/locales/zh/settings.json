@@ -8,6 +8,7 @@
   "tabs": {
     "ai": "AI 模型",
     "domain": "领域知识",
+    "audit": "成本审计",
     "general": "通用",
     "data": "数据",
     "about": "关于"
@@ -69,6 +70,29 @@
     "reset_button": "重置设置",
     "reset_title": "设置已重置",
     "reset_desc": "所有设置已恢复为默认值。"
+  },
+  "audit": {
+    "title": "成本控制与审计",
+    "daily_usage": "今日支出 (预估)",
+    "tokens": "当日 Token (入/出)",
+    "total_cost": "累计支出 (预估)",
+    "total_tokens": "累计 Token (入/出)",
+    "budget_status": "预算状态",
+    "resets_daily": "每日零点重置 (预估值)",
+    "active": "生效中",
+    "disabled": "已禁用",
+    "protection_toggle": "启用保护",
+    "protection_enabled": "硬限制防护已开启",
+    "protection_disabled": "当前不受预算限制",
+    "daily_hard_limit": "每日支出上限 ($)",
+    "hard_limit_desc": "由于 Token 统计存在误差，实际扣费请以服务商账单为准。超过此限制后将拦截请求。",
+    "project_soft_limit": "批处理告警阈值 ($)",
+    "soft_limit_desc": "当批量提取任务的预估成本超过此阈值时，需手动确认。",
+    "price_multiplier": "价格倍率 (Multiplier)",
+    "multiplier_desc": "基于 $1.00 / 1M Tokens 的基础单价进行设置。例如：DeepSeek 建议设为 0.14，GPT-4 建议保持 1.0 或更高。",
+    "effective_price_label": "当前有效单价",
+    "save_btn": "保存更改",
+    "saved": "设置已保存"
   },
   "about": {
     "title": "关于 Wansan Studio",

@@ -1,19 +1,42 @@
 import { create } from 'zustand'
 
-// Mock Workbench Store for Export Runtime
-export const useWorkbenchStore = create((set) => ({
-  // Default State
+interface CanvasConfig {
+  zoom: number
+  layout: string
+  title: string
+}
+
+interface WorkbenchStoreState {
+  canvasConfig: CanvasConfig
+  pageCount: number
+  layoutScenario: string
+  pinnedReports: unknown[]
+  setCanvasConfig: (updates: Partial<CanvasConfig>) => void
+  setPageCount: (count: number) => void
+  setLayoutScenario: (scenario: string) => void
+  pinReport: () => void
+  removeReport: () => void
+  updateReportTitle: () => void
+  updateReportConfig: () => void
+  updateLayout: () => void
+  updateGlobalLayout: () => void
+  moveWidgetToPage: () => void
+  incrementPageCount: () => void
+  setEditingReportId: () => void
+  reset: () => void
+}
+
+export const useWorkbenchStore = create<WorkbenchStoreState>(set => ({
   canvasConfig: { zoom: 100, layout: 'a4', title: 'Report' },
   pageCount: 1,
   layoutScenario: 'default',
   pinnedReports: [],
-  
-  // Actions (No-op or simple updates for local interaction like Zoom)
-  setCanvasConfig: (updates: any) => set((state: any) => ({ canvasConfig: { ...state.canvasConfig, ...updates } })),
-  setPageCount: (count: number) => set({ pageCount: count }),
-  setLayoutScenario: (scenario: any) => set({ layoutScenario: scenario }),
-  
-  // Placeholders
+  setCanvasConfig: updates =>
+    set(state => ({
+      canvasConfig: { ...state.canvasConfig, ...updates },
+    })),
+  setPageCount: count => set({ pageCount: count }),
+  setLayoutScenario: scenario => set({ layoutScenario: scenario }),
   pinReport: () => {},
   removeReport: () => {},
   updateReportTitle: () => {},
@@ -26,41 +49,70 @@ export const useWorkbenchStore = create((set) => ({
   reset: () => {},
 }))
 
-// Mock Project Store
-export const useProjectStore = create((_set) => ({
+interface ProjectStoreState {
+  widgetRegistry: Record<string, unknown>
+  files: unknown[]
+  sessions: unknown[]
+  domainRules: unknown[]
+  updateWidget: () => void
+}
+
+export const useProjectStore = create<ProjectStoreState>(() => ({
   widgetRegistry: {},
   files: [],
   sessions: [],
   domainRules: [],
-  updateWidget: () => {}, // Mock action
-  // ... add actions if needed
+  updateWidget: () => {},
 }))
 
-// Mock UI Store
-export const useUIStore = create((_set) => ({
+interface UIStoreState {
+  contentLayout: string
+  sidebarLayout: string
+}
+
+export const useUIStore = create<UIStoreState>(() => ({
   contentLayout: 'vertical',
   sidebarLayout: 'visible',
 }))
 
-// Mock Chat Store
-export const useChatStore = create((_set) => ({
-    messages: [],
-    sendMessage: () => {},
-    setReplyTo: () => {}
+interface ChatStoreState {
+  messages: unknown[]
+  sendMessage: () => void
+  setReplyTo: () => void
+}
+
+export const useChatStore = create<ChatStoreState>(() => ({
+  messages: [],
+  sendMessage: () => {},
+  setReplyTo: () => {},
 }))
 
-// Mock Settings Store (needed for language)
-export const useSettingsStore = create((_set) => ({
-    language: 'en',
-    isActivated: true, // Pretend pro for best view
+interface SettingsStoreState {
+  language: 'en' | 'zh'
+  isActivated: boolean
+}
+
+export const useSettingsStore = create<SettingsStoreState>(() => ({
+  language: 'en',
+  isActivated: true,
 }))
 
-export const useSqlLabStore = create((_set) => ({
-    session: null,
-    open: () => {},
-    close: () => {}
+interface SqlLabStoreState {
+  session: unknown | null
+  open: () => void
+  close: () => void
+}
+
+export const useSqlLabStore = create<SqlLabStoreState>(() => ({
+  session: null,
+  open: () => {},
+  close: () => {},
 }))
 
-export const useToastStore = create((_set) => ({
-    addToast: () => {}
+interface ToastStoreState {
+  addToast: () => void
+}
+
+export const useToastStore = create<ToastStoreState>(() => ({
+  addToast: () => {},
 }))

@@ -43,7 +43,7 @@ export function ChatStream() {
   // Map store files to TableSchema for AI - Memoized
   const schemas: TableSchema[] = useMemo(
     () => readyFiles.map(f => mapFileToSchema(f, files)),
-    [readyFiles]
+    [readyFiles, files]
   )
 
   const onQuerySubmit = (query: string) => {

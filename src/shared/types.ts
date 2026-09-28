@@ -1,5 +1,11 @@
-import type { ChartType, InsightResult, ReportData, ReportWidget } from './types/dashboard'
+import type {
+  ChartType,
+  InsightResult,
+  ReportData,
+  ReportWidget,
+} from './types/dashboard'
 import type { FilterParam } from './schemas/analysis'
+import type { FilterState } from './types/filter'
 
 export type { ChartType, InsightResult, ReportData, ReportWidget }
 
@@ -12,6 +18,12 @@ export type ColumnType =
   | 'INTEGER'
   | 'BIGINT'
   | 'TIMESTAMP'
+
+export interface ExtractionHint {
+  targetColumnName: string
+  prompt: string
+  reason: string
+}
 
 export interface ColumnSemantic {
   /**
@@ -37,30 +49,43 @@ export interface ColumnSemantic {
    * Default: true.
    */
   isVisibleToAI?: boolean
+
+  /** [V1.7] Dimension vs Measure vs Attribute */
+  usageType?: 'Dimension' | 'Measure' | 'Attribute'
+  
+  /** [V1.7] Default aggregation method */
+  defaultAggregation?: 'SUM' | 'AVG' | 'COUNT' | 'MAX' | 'NONE'
+
+  /** [V1.7] Proactive AI suggestions for extraction */
+  extractionHints?: ExtractionHint[]
 }
+
+export type ColumnSourceType = 'raw' | 'ai' | 'metric' | 'joined'
 
 export interface ColumnSchema {
   name: string // Original column name (e.g., "销售额(万元)")
   safeName: string // Sanitized name for SQL (e.g., "销售额(万元)") - *DuckDB supports utf8, but quoting is mandatory*
   type: ColumnType // Inferred DuckDB type
-  sampleValues: any[] // Top 3 non-null values for AI context
+  sampleValues: unknown[] // Top 3 non-null values for AI context
   nullable?: boolean // From UI state, indicates if column can have nulls
 
   isPrimaryKey?: boolean // Optional metadata when a column is a primary key
 
   userType?: ColumnType // User defined type override
   semantic?: ColumnSemantic // [NEW] Semantic metadata
+  sourceType?: ColumnSourceType // [NEW] v1.7.5
 }
 
 export interface TableSchema {
   tableName: string // Normalized table name (e.g., "t_orders")
   description?: string // Original file name for AI context (e.g., "Sales 2023.xlsx")
   columns: ColumnSchema[]
+  rowCount?: number // [NEW] Total rows in the table, used for AI optimization
   smartMetrics?: SmartMetric[] // Metrics to be displayed in the schema
   relations?: RelationSuggestion[] // Relationships where this table is the source
   tempFilePath?: string // Path to temporary file (e.g. converted CSV) for cleanup
   sheetName?: string // Source sheet name for Excel files
-  readOptions?: Record<string, any> // Options used to read the file (e.g. { encoding: 'GBK' })
+  readOptions?: Record<string, unknown> // Options used to read the file (e.g. { encoding: 'GBK' })
 }
 
 export interface AIAnalysisContext {
@@ -74,7 +99,7 @@ export interface AIAnalysisContext {
 
 export interface AIAnalysisResult {
   status: 'success' | 'error'
-  data?: any[] // Raw rows from DuckDB
+  data?: Array<Record<string, unknown>> // Raw rows from DuckDB
   columns?: string[] // Column headers
   sql?: string // The Executed SQL
 
@@ -119,8 +144,18 @@ export interface MetricSuggestion {
 
 export interface ContextAnalysisResult {
   relationships: RelationSuggestion[]
-  metrics?: MetricSuggestion[]
   suggestedPrompts: string[]
+}
+
+export interface SemanticAnalysisResult {
+  columns: Record<string, ColumnSemantic>
+  metrics?: Array<{
+    name: string
+    sqlExpression: string
+    description: string
+    reason: string
+    semantic?: ColumnSemantic // [V1.7.5] Allow full semantics for suggested metrics
+  }>
 }
 
 export type LoadingType = 'cleaning' | 'thinking' | 'crunching' | 'fixing'
@@ -158,7 +193,7 @@ export interface LocalFileSource {
   subResource?: string // e.g. Excel sheet name
   format?: 'excel' | 'csv' | 'parquet'
   fingerprint?: string // For change detection
-  readOptions?: Record<string, any> // e.g. encoding
+  readOptions?: Record<string, unknown> // e.g. encoding
 }
 
 export interface DatabaseSource {
@@ -170,12 +205,19 @@ export interface DatabaseSource {
 
 export type DataSourceConfig = LocalFileSource | DatabaseSource
 
+export interface GridDisplayState {
+  filterState?: FilterState
+  sorting?: Array<{ id: string; desc: boolean }>
+  columnVisibility?: Record<string, boolean>
+  columnOrder?: string[]
+}
+
 export interface FileNode {
   id: string
   name: string
   tableName: string // DuckDB table name (local)
   source: DataSourceConfig // [REFACTOR] Structured source config
-  
+
   status: SyncStatus
   progress?: number // 0-100
   size?: number
@@ -186,6 +228,15 @@ export interface FileNode {
   createdAt: number
   smartMetrics?: SmartMetric[] // Persisted metrics
   relations?: TableRelation[] // NEW: Stored per-file
+
+  /**
+   * [V1.7] Cache of the logical view columns (including Sidecar & Metrics).
+   * This is the "True Schema" that AI should see.
+   */
+  viewSchema?: ColumnSchema[]
+
+  /** [V1.7.5] Persisted UI State for the grid */
+  displayState?: GridDisplayState
 }
 
 export interface ReloadResult {
@@ -247,7 +298,7 @@ export interface RemoteConfig {
     link?: string
     level?: 'info' | 'warning'
   } | null
-  providers?: Record<string, any> // AIProviderConfig
+  providers?: Record<string, unknown> // AIProviderConfig
 }
 
 // 组合类型：发送给前端的最终配置

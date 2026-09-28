@@ -60,7 +60,11 @@ export function useAutoLink() {
       }
 
       const schemas = filesToUse.map(f =>
-        mapFileToSchema(f, filesToUse, { skipMetrics: true, skipRelations: true })
+        mapFileToSchema(f, filesToUse, { 
+          skipMetrics: true, 
+          skipRelations: true,
+          disableMasking: true 
+        })
       )
 
       try {

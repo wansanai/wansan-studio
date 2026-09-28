@@ -306,10 +306,10 @@ export function DashboardHeader() {
           ctx.fillText('Created with Wansan Studio', textX, textY)
         }
 
-        const result = await window.electronAPI?.saveImage(
-          canvas.toDataURL('image/png'),
-          fileName
-        )
+        const result = await window.electronAPI?.saveImage({
+          dataUrl: canvas.toDataURL('image/png'),
+          name: fileName
+        })
         
         if (result.success && result.data) {
           const filePath = result.data as string
@@ -435,11 +435,11 @@ export function DashboardHeader() {
       const dataUri = pdf.output('datauristring')
       const base64Content = dataUri.split(',')[1] // Strip the data URI prefix
 
-      const result = await window.electronAPI?.saveFile(
-        base64Content,
-        'pdf',
-        fileName
-      )
+      const result = await window.electronAPI?.saveFile({
+        content: base64Content,
+        extension: 'pdf',
+        name: fileName
+      })
 
       if (result?.success && result.data) {
         const filePath = result.data as string

@@ -30,11 +30,11 @@ export interface ParseFileResult {
   tableName: string
   schema: DatabaseSchema
   rowCount: number
-  preview: any[][]
+  preview: unknown[][]
 }
 
 // IPC 响应类型
-export interface IPCResponse<T = any> {
+export interface IPCResponse<T = unknown> {
   success: boolean
   data?: T
   error?: string
@@ -59,6 +59,6 @@ export interface QueryHistory {
   timestamp: Date
   query: string
   type: 'natural' | 'sql'
-  result?: any[]
+  result?: unknown[]
   error?: string
 }

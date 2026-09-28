@@ -17,6 +17,9 @@ import { createBigIntStorage } from '@shared/serialization'
 import { Analytics } from '../services/analytics'
 import { FilterParam } from '@shared/schemas/analysis'
 import { DuckDBViewManager } from '../lib/duckdb-view-manager'
+import { useToastStore } from './useToastStore'
+import { normalizeDuckDBType } from '@shared/type-utils'
+import { getSidecarTableName, getLogicalViewName } from '@shared/naming-utils'
 
 // 生成唯一 ID
 const generateId = () =>
@@ -34,6 +37,7 @@ export interface SmartFilterRequest {
 }
 
 export interface ProjectState extends ProjectData {
+  appMode: 'analysis' | 'data' // [NEW] Master Mode Switch
   sidebarMode: 'sessions' | 'data'
   layoutScenario: LayoutScenario
   editingReportId: string | null
@@ -51,6 +55,7 @@ export interface ProjectState extends ProjectData {
   isProjectLoaded: boolean // Transient flag to indicate project fully loaded
 
   // Actions
+  setAppMode: (mode: 'analysis' | 'data') => void // [NEW]
   setSidebarMode: (mode: 'sessions' | 'data') => void
   setView: (view: ViewMode) => void
   setActiveFile: (id: string | null) => void
@@ -101,7 +106,6 @@ export interface ProjectState extends ProjectData {
   setAnalysisReviewResult: (result: ContextAnalysisResult | null) => void
   applyAnalysisResult: (data: {
     selectedRelations: any[]
-    selectedMetrics: any[]
     selectedPrompts: string[]
   }) => Promise<void>
   addFile: (
@@ -109,6 +113,7 @@ export interface ProjectState extends ProjectData {
   ) => string
   removeFile: (id: string) => Promise<void>
   updateFile: (id: string, updates: Partial<FileNode>) => void
+  bulkUpdateFiles: (updates: Record<string, Partial<FileNode>>) => void
   updateFileProgress: (id: string, progress: number) => void
   updateColumn: (
     fileId: string,
@@ -120,6 +125,7 @@ export interface ProjectState extends ProjectData {
     columnName: string,
     semantic: Partial<import('@shared/types').ColumnSemantic>
   ) => void
+  removeColumn: (fileId: string, columnName: string) => Promise<void> // [NEW] v1.7.5
   toggleKeyColumn: (fileId: string, columnName: string) => void
   addRelation: (
     relation: Omit<TableRelation, 'id'> & { sourceFileId: string }
@@ -150,9 +156,14 @@ export interface ProjectState extends ProjectData {
   ) => Promise<'completed' | 'cancelled' | 'pending' | 'error'>
   loadProject: (data: ProjectData) => void
   cleanupZombieFiles: () => void
-  serialize: () => string
+  refreshFileMetadata: (fileId: string) => Promise<void> // [NEW] v1.7.5
   reset: () => void
   closeProject: () => Promise<void>
+
+  // [NEW] v1.7.5 Table Views
+  saveTableView: (fileId: string, view: import('@shared/types/project').TableView) => void
+  deleteTableView: (fileId: string, viewId: string) => void
+  updateTableView: (fileId: string, viewId: string, updates: Partial<import('@shared/types/project').TableView>) => void
 }
 
 const createNewSession = (): Session => ({
@@ -186,11 +197,13 @@ const initialProjectState: ProjectData & {
   sessions: [],
   activeSessionId: '',
   activeView: 'chat',
+  appMode: 'analysis', // [NEW] Default to analysis
   activeFileId: null,
   widgetRegistry: {},
   currentProjectPath: null,
   isProjectLoaded: false,
   editingReportId: null,
+  tableViews: {},
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -209,6 +222,24 @@ export const useProjectStore = create<ProjectState>()(
       smartFilterRequest: null,
       analysisReviewResult: null,
       isSmartModelingOpen: false,
+      appMode: 'analysis',
+
+      setAppMode: mode =>
+        set(_state => {
+          if (mode === 'data') {
+            return {
+              appMode: mode,
+              sidebarMode: 'data',
+              activeView: 'preview'
+            }
+          } else {
+            return {
+              appMode: mode,
+              sidebarMode: 'sessions',
+              activeView: 'chat'
+            }
+          }
+        }),
 
       setSidebarMode: mode =>
         set(_state => {
@@ -245,12 +276,10 @@ export const useProjectStore = create<ProjectState>()(
 
       applyAnalysisResult: async ({
         selectedRelations,
-        selectedMetrics,
         selectedPrompts,
       }) => {
         const {
           addRelation,
-          addSmartMetric,
           setSuggestedPrompts,
           files,
         } = get()
@@ -259,6 +288,7 @@ export const useProjectStore = create<ProjectState>()(
         for (const rel of selectedRelations) {
           const fileA = files.find(f => f.tableName === rel.sourceTable)
           const fileB = files.find(f => f.tableName === rel.targetTable)
+          
           if (fileA && fileB) {
             // Check for duplicates handled inside addRelation, but we call it sequentially
             addRelation({
@@ -271,29 +301,7 @@ export const useProjectStore = create<ProjectState>()(
           }
         }
 
-        // 2. Add Metrics (With Duplicate Check)
-        await Promise.all(
-          selectedMetrics.map(async m => {
-            const file = files.find(f => f.tableName === m.tableName)
-            if (file) {
-              const exists = (file.smartMetrics || []).some(
-                existing =>
-                  existing.name === m.name ||
-                  existing.sqlExpression === m.sqlExpression
-              )
-              if (!exists) {
-                await addSmartMetric(file.id, {
-                  id: crypto.randomUUID(),
-                  name: m.name,
-                  sqlExpression: m.sqlExpression,
-                  description: m.description,
-                })
-              }
-            }
-          })
-        )
-
-        // 3. Update Prompts (Direct Replacement)
+        // 2. Update Prompts (Direct Replacement)
         if (selectedPrompts.length > 0) {
           setSuggestedPrompts(selectedPrompts)
         }
@@ -785,36 +793,6 @@ export const useProjectStore = create<ProjectState>()(
       setSuggestedPrompts: prompts => set({ suggestedPrompts: prompts }),
 
       addFile: file => {
-        // [REFACTOR] Support structured source checking
-        const existing = get().files.find(f => {
-          if (file.source && f.source.type === file.source.type) {
-            if (
-              f.source.type === 'local_file' &&
-              file.source.type === 'local_file'
-            ) {
-              return (
-                f.source.path === file.source.path &&
-                f.source.subResource === file.source.subResource
-              )
-            }
-            if (
-              f.source.type === 'database' &&
-              file.source.type === 'database'
-            ) {
-              return (
-                f.source.connectionId === file.source.connectionId &&
-                f.source.table === file.source.table &&
-                f.source.schema === file.source.schema
-              )
-            }
-          }
-          return false
-        })
-
-        if (existing) {
-          throw new Error(`File "${file.name}" is already imported.`)
-        }
-
         const id = generateId()
         const now = Date.now()
         const newFile: FileNode = {
@@ -836,6 +814,19 @@ export const useProjectStore = create<ProjectState>()(
           ext = 'db_table'
         }
         Analytics.track('file_imported', { file_type: ext })
+        
+        // [V1.7] Initial View Build (Fire and Forget)
+        // We need to ensure the v_table exists immediately for Data Grid
+        setTimeout(() => {
+            const currentState = get()
+            const addedFile = currentState.files.find(f => f.id === id)
+            if (addedFile) {
+                const relations = selectAllRelations(currentState)
+                DuckDBViewManager.rebuildView(addedFile, currentState.files, relations)
+                    .catch(e => console.error('Initial view build failed', e))
+            }
+        }, 0)
+
         return id
       },
 
@@ -845,9 +836,13 @@ export const useProjectStore = create<ProjectState>()(
 
         if (file) {
           try {
+            // 1. Physical Delete: Main Table, Sidecar, and Sequence (via cascade backend)
             await window.electronAPI.deleteTable(file.tableName)
+            
+            // 2. Logic Delete: View
+            await window.electronAPI.runSQL(`DROP VIEW IF EXISTS "${getLogicalViewName(file.tableName)}"`)
           } catch (e) {
-            console.error('Failed to drop table', e)
+            console.error('Failed to drop resources', e)
           }
         }
 
@@ -864,6 +859,13 @@ export const useProjectStore = create<ProjectState>()(
       updateFile: (id, updates) =>
         set(state => ({
           files: state.files.map(f => (f.id === id ? { ...f, ...updates } : f)),
+        })),
+
+      bulkUpdateFiles: updates =>
+        set(state => ({
+          files: state.files.map(f =>
+            updates[f.id] ? { ...f, ...updates[f.id] } : f
+          ),
         })),
 
       updateFileProgress: (id, progress) =>
@@ -909,6 +911,106 @@ export const useProjectStore = create<ProjectState>()(
         }))
       },
 
+      removeColumn: async (fileId, columnName) => {
+        const state = get()
+        const file = state.files.find(f => f.id === fileId)
+        if (!file) return
+
+        const col = file.columns.find(c => c.name === columnName)
+        if (!col) return
+
+        // --- OPTIMISTIC UPDATE ---
+        // Immediately remove from UI to ensure instant feedback in Columns list
+        set(prev => {
+          const currentViews = (prev.tableViews || {})[fileId] || []
+          const updatedViews = currentViews.map(view => {
+            // Cleanup Filters
+            const updatedFilters = typeof view.filters === 'object' && view.filters !== null && 'conditions' in view.filters
+              ? { ...view.filters, conditions: view.filters.conditions.filter((c: any) => c.columnName !== columnName) }
+              : Array.isArray(view.filters) 
+                ? view.filters.filter((c: any) => c.columnName !== columnName)
+                : view.filters
+
+            return {
+              ...view,
+              filters: updatedFilters,
+              // Cleanup Sort
+              sort: (view.sort || []).filter(s => s.id !== columnName),
+              // Cleanup Column Config
+              columnConfig: {
+                ...view.columnConfig,
+                order: (view.columnConfig?.order || []).filter(c => c !== columnName),
+                hidden: (view.columnConfig?.hidden || []).filter(c => c !== columnName),
+              }
+            }
+          })
+
+          return {
+            files: prev.files.map(f => {
+              if (f.id !== fileId) return f
+              
+              // Cleanup active displayState
+              const ds = f.displayState
+              const updatedDisplayState = ds ? {
+                ...ds,
+                sorting: (ds.sorting || []).filter(s => s.id !== columnName),
+                filterState: ds.filterState ? {
+                  ...ds.filterState,
+                  conditions: (ds.filterState.conditions || []).filter(c => c.columnName !== columnName)
+                } : ds.filterState,
+                columnOrder: (ds.columnOrder || []).filter(c => c !== columnName),
+                columnVisibility: ds.columnVisibility ? (() => {
+                  const { [columnName]: _, ...rest } = ds.columnVisibility
+                  return rest
+                })() : ds.columnVisibility
+              } : ds
+
+              return {
+                ...f,
+                columns: f.columns.filter(c => c.name !== columnName),
+                viewSchema: f.viewSchema?.filter(c => c.name !== columnName),
+                displayState: updatedDisplayState
+              }
+            }),
+            tableViews: {
+              ...prev.tableViews,
+              [fileId]: updatedViews
+            }
+          }
+        })
+
+        try {
+          if (col.sourceType === 'metric') {
+            // 1. Handle Metric Deletion
+            const metric = (file.smartMetrics || []).find(m => m.name === columnName)
+            if (metric) {
+              await get().removeSmartMetric(fileId, metric.id)
+            }
+          } else if (col.sourceType === 'ai') {
+            // 2. Handle AI Column Deletion (Physical)
+            const res = await window.electronAPI.dropAIColumn({
+              tableName: file.tableName,
+              columnName: col.name
+            })
+            if (!res.success) throw new Error(res.error)
+          }
+
+          // FINAL SYNC: refreshFileMetadata internally calls rebuildView and updates lastModified
+          await get().refreshFileMetadata(fileId)
+          
+        } catch (e: any) {
+          console.error('[ProjectStore] removeColumn failed', e)
+          // Rollback on error (re-sync)
+          await get().refreshFileMetadata(fileId)
+          
+          useToastStore.getState().addToast({
+            title: 'Delete failed',
+            description: e.message,
+            type: 'error'
+          })
+        }
+      },
+
       toggleKeyColumn: (fileId, columnName) => {
         const file = get().files.find(f => f.id === fileId)
         if (!file) return
@@ -938,7 +1040,7 @@ export const useProjectStore = create<ProjectState>()(
           return
         }
         const id = generateId()
-        const newRelation = { ...data, id, joinType: 'LEFT' as const } // Default join type
+        const newRelation = { ...data, id, joinType: 'LEFT' as const }
 
         set(state => ({
           files: state.files.map(f =>
@@ -948,26 +1050,21 @@ export const useProjectStore = create<ProjectState>()(
           ),
         }))
 
-        // Rebuild View
+        // Rebuild View & Update viewSchema
         const updatedState = get()
-        const updatedSource = updatedState.files.find(
-          f => f.id === sourceFileId
-        )
+        const updatedSource = updatedState.files.find(f => f.id === sourceFileId)
         if (updatedSource) {
-          const allRelations = updatedState.files.flatMap(f =>
-            (f.relations || []).map(r => ({
-              id: r.id,
-              fileAId: f.id,
-              columnA: r.sourceColumn,
-              fileBId: r.targetFileId,
-              columnB: r.targetColumn,
-            }))
-          )
-          await DuckDBViewManager.rebuildView(
+          const allRelations = selectAllRelations(updatedState)
+          const viewSchema = await DuckDBViewManager.rebuildView(
             updatedSource,
             updatedState.files,
-            allRelations as any
+            allRelations
           )
+          set(prev => ({
+            files: prev.files.map(f =>
+              f.id === sourceFileId ? { ...f, viewSchema } : f
+            ),
+          }))
         }
       },
 
@@ -990,20 +1087,17 @@ export const useProjectStore = create<ProjectState>()(
           const state = get()
           const file = state.files.find(f => f.id === sourceFileId)
           if (file) {
-            const allRelations = state.files.flatMap(f =>
-              (f.relations || []).map(r => ({
-                id: r.id,
-                fileAId: f.id,
-                columnA: r.sourceColumn,
-                fileBId: r.targetFileId,
-                columnB: r.targetColumn,
-              }))
-            )
-            await DuckDBViewManager.rebuildView(
+            const allRelations = selectAllRelations(state)
+            const viewSchema = await DuckDBViewManager.rebuildView(
               file,
               state.files,
-              allRelations as any
+              allRelations
             )
+            set(prev => ({
+              files: prev.files.map(f =>
+                f.id === sourceFileId ? { ...f, viewSchema } : f
+              ),
+            }))
           }
         }
       },
@@ -1022,46 +1116,56 @@ export const useProjectStore = create<ProjectState>()(
 
         if (updatedFile) {
           try {
-            const allRelations = state.files.flatMap(f =>
-              (f.relations || []).map(r => ({
-                id: r.id,
-                fileAId: f.id,
-                columnA: r.sourceColumn,
-                fileBId: r.targetFileId,
-                columnB: r.targetColumn,
-              }))
-            )
-
-            const typeMap = await DuckDBViewManager.rebuildView(
+            const allRelations = selectAllRelations(state)
+            const viewSchema = await DuckDBViewManager.rebuildView(
               updatedFile,
               state.files,
-              allRelations as any
+              allRelations
             )
-            const inferredType = typeMap.get(metric.safeName)
-
-            if (inferredType) {
-              set(prev => ({
-                files: prev.files.map(f =>
-                  f.id === fileId
-                    ? {
-                        ...f,
-                        smartMetrics: (f.smartMetrics || []).map(m =>
-                          m.id === metric.id
-                            ? { ...m, type: inferredType as any }
-                            : m
-                        ),
-                      }
-                    : f
-                ),
-              }))
-            }
-          } catch (e) {
+            
+            // Infer Type
+            const inferredCol = viewSchema.find(c => c.name === metric.name)
+            
+            set(prev => ({
+              files: prev.files.map(f =>
+                f.id === fileId
+                  ? {
+                      ...f,
+                      viewSchema, // Update View Schema
+                      smartMetrics: (f.smartMetrics || []).map(m =>
+                        m.id === metric.id
+                          ? { ...m, type: (inferredCol?.type || 'DOUBLE') as any }
+                          : m
+                      ),
+                    }
+                  : f
+              ),
+            }))
+          } catch (e: any) {
             console.error('Failed to sync metric type', e)
+            
+            // Rollback on failure
+            set(prev => ({
+              files: prev.files.map(f =>
+                f.id === fileId
+                  ? { ...f, smartMetrics: (f.smartMetrics || []).filter(m => m.id !== metric.id) }
+                  : f
+              )
+            }))
+
+            useToastStore.getState().addToast({
+              title: 'Failed to add metric',
+              description: e.message || 'SQL Syntax Error',
+              type: 'error'
+            })
           }
         }
       },
 
       updateSmartMetric: async (fileId, metricId, updates) => {
+        const oldFile = get().files.find(f => f.id === fileId)
+        const oldMetric = oldFile?.smartMetrics?.find(m => m.id === metricId)
+
         set(state => ({
           files: state.files.map(f =>
             f.id === fileId
@@ -1079,20 +1183,37 @@ export const useProjectStore = create<ProjectState>()(
         const updatedFile = state.files.find(f => f.id === fileId)
 
         if (updatedFile) {
-          const allRelations = state.files.flatMap(f =>
-            (f.relations || []).map(r => ({
-              id: r.id,
-              fileAId: f.id,
-              columnA: r.sourceColumn,
-              fileBId: r.targetFileId,
-              columnB: r.targetColumn,
+          try {
+            const allRelations = selectAllRelations(state)
+            const viewSchema = await DuckDBViewManager.rebuildView(
+              updatedFile,
+              state.files,
+              allRelations
+            )
+            set(prev => ({
+              files: prev.files.map(f =>
+                f.id === fileId ? { ...f, viewSchema } : f
+              ),
             }))
-          )
-          await DuckDBViewManager.rebuildView(
-            updatedFile,
-            state.files,
-            allRelations as any
-          )
+          } catch (e: any) {
+             console.error('Failed to update metric', e)
+             // Rollback
+             if (oldMetric) {
+                set(prev => ({
+                  files: prev.files.map(f =>
+                    f.id === fileId
+                      ? { ...f, smartMetrics: (f.smartMetrics || []).map(m => m.id === metricId ? oldMetric : m) }
+                      : f
+                  )
+                }))
+             }
+
+             useToastStore.getState().addToast({
+                title: 'Failed to update metric',
+                description: e.message,
+                type: 'error'
+             })
+          }
         }
       },
 
@@ -1112,20 +1233,17 @@ export const useProjectStore = create<ProjectState>()(
         const state = get()
         const updatedFile = state.files.find(f => f.id === fileId)
         if (updatedFile) {
-          const allRelations = state.files.flatMap(f =>
-            (f.relations || []).map(r => ({
-              id: r.id,
-              fileAId: f.id,
-              columnA: r.sourceColumn,
-              fileBId: r.targetFileId,
-              columnB: r.targetColumn,
-            }))
-          )
-          await DuckDBViewManager.rebuildView(
+          const allRelations = selectAllRelations(state)
+          const viewSchema = await DuckDBViewManager.rebuildView(
             updatedFile,
             state.files,
-            allRelations as any
+            allRelations
           )
+          set(prev => ({
+            files: prev.files.map(f =>
+              f.id === fileId ? { ...f, viewSchema } : f
+            ),
+          }))
         }
       },
 
@@ -1326,14 +1444,14 @@ export const useProjectStore = create<ProjectState>()(
           }
 
           // 2. Trigger Backend Re-ingest
-          const result = await window.electronAPI.reIngestFile(
+          const result = await window.electronAPI.reIngestFile({
             fileId,
-            newPath,
-            file.tableName,
-            file.source.subResource,
-            file.columns,
-            file.source.readOptions // Pass saved read options (e.g. encoding)
-          )
+            filePath: newPath,
+            tableName: file.tableName,
+            sheetName: file.source.subResource,
+            columns: file.columns,
+            readOptions: file.source.readOptions, // Pass saved read options (e.g. encoding)
+          })
 
           if (!result.success || !result.data) {
             throw new Error(result.error || 'Re-ingest failed')
@@ -1380,6 +1498,14 @@ export const useProjectStore = create<ProjectState>()(
             ),
           }))
 
+          // [V1.7] Rebuild View to ensure Sidecar & Metrics are synced
+          const updatedState = get()
+          const updatedFile = updatedState.files.find(f => f.id === fileId)
+          if (updatedFile) {
+            const relations = selectAllRelations(updatedState)
+            await DuckDBViewManager.rebuildView(updatedFile, updatedState.files, relations)
+          }
+
           return 'completed'
         } catch (error: any) {
           console.error('replaceFile failed', error)
@@ -1415,75 +1541,108 @@ export const useProjectStore = create<ProjectState>()(
           ),
         })),
 
-      serialize: () => {
-        // Destructure actions to exclude them from serialization
-        const {
-          setActiveFile: _setActiveFile,
-          setActiveSession: _setActiveSession,
-          setRefreshing: _setRefreshing,
-          refreshSessionWidgets: _refreshSessionWidgets,
-          confirmReplace: _confirmReplace,
-          createSession: _createSession,
-          switchSession: _switchSession,
-          deleteSession: _deleteSession,
-          renameSession: _renameSession,
-          clearSessionMessages: _clearSessionMessages,
-          addMessage: _addMessage,
-          updateMessage: _updateMessage,
-          deleteMessage: _deleteMessage,
-          setReplyTo: _setReplyTo,
-          setAbortController: _setAbortController,
-          addWidget: _addWidget,
-          removeWidget: _removeWidget,
-          updateWidget: _updateWidget,
-          updateWidgetData: _updateWidgetData,
-          updateRegistryByWidgetId: _updateRegistryByWidgetId,
-          updateLayout: _updateLayout,
-          setCanvasConfig: _setCanvasConfig,
-          setLayoutScenario: _setLayoutScenario,
-          setEditingReportId: _setEditingReportId,
-          setProjectName: _setProjectName,
-          setSelectedNode: _setSelectedNode,
-          setRestoring: _setRestoring,
-          setSuggestedPrompts: _setSuggestedPrompts,
-          addFile: _addFile,
-          removeFile: _removeFile,
-          updateFile: _updateFile,
-          updateColumn: _updateColumn,
-          updateColumnSemantic: _updateColumnSemantic,
-          toggleKeyColumn: _toggleKeyColumn,
-          addRelation: _addRelation,
-          removeRelation: _removeRelation,
-          markAsStale: _markAsStale,
-          markFileMissing: _markFileMissing,
-          reloadFile: _reloadFile,
-          replaceFile: _replaceFile,
-          loadProject: _loadProject,
-          serialize: _serialize,
-          reset: _reset,
-          abortControllers: _abortControllers,
-          layoutScenario: _layoutScenario,
-          editingReportId: _editingReportId,
-          pendingReplace: _pendingReplace,
-          showRefreshConfirm: _showRefreshConfirm,
-          isRestoring: _isRestoring,
-          isRefreshing: _isRefreshing,
-          ...data
-        } = get()
+      refreshFileMetadata: async fileId => {
+        const state = get()
+        const file = state.files.find(f => f.id === fileId)
+        if (!file) return
 
-        return JSON.stringify(data, (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString()
+        try {
+          // 1. Fetch sidecar info first to identify AI columns authoritatively
+          const sidecarName = getSidecarTableName(file.tableName)
+          const sidecarRes = await window.electronAPI.runSQL(`PRAGMA table_info("${sidecarName}")`)
+          const aiColumnNames = new Set<string>()
+          if (sidecarRes.success && sidecarRes.data) {
+             sidecarRes.data.data.forEach((c: any) => {
+                if (c.name !== '_ws_row_id') aiColumnNames.add(c.name)
+             })
           }
-          return value
-        })
+
+          // 2. Rebuild View First to ensure sidecar columns are linked
+          const allRelations = selectAllRelations(state)
+          await DuckDBViewManager.rebuildView(file, state.files, allRelations)
+
+          const viewName = getLogicalViewName(file.tableName)
+
+          // 3. Fetch columns from the LOGICAL VIEW (True Schema)
+          const sqlRes = await window.electronAPI.runSQL(`PRAGMA table_info("${viewName}")`)
+          if (!sqlRes.success || !sqlRes.data) throw new Error(sqlRes.error || 'Failed to fetch view info')
+          
+          const rawColumns = sqlRes.data.data.map((c: any) => ({
+            name: c.name,
+            type: normalizeDuckDBType(c.type),
+            safeName: c.name,
+            sampleValues: [],
+            isPrimaryKey: c.pk === 1,
+            sourceType: 'raw' // Default
+          }))
+
+          // 4. Fetch Samples
+          const sampleRes = await window.electronAPI.runSQL(`SELECT * FROM "${viewName}" LIMIT 5`)
+          const sampleRows = sampleRes.success && sampleRes.data ? sampleRes.data.data : []
+
+          // 5. Merge and Update
+          const mergedColumns = rawColumns.map((newCol: any) => {
+             const oldCol = file.columns.find(c => c.name === newCol.name)
+             const samples = sampleRows.map(r => r[newCol.name]).filter(v => v !== null && v !== undefined)
+
+             // AUTHORITATIVE IDENTIFICATION: 
+             let sourceType: import('@shared/types').ColumnSourceType = oldCol?.sourceType || 'raw'
+             const metricDef = file.smartMetrics?.find(m => m.name === newCol.name)
+             
+             if (aiColumnNames.has(newCol.name)) {
+                sourceType = 'ai'
+             } else if (metricDef) {
+                sourceType = 'metric'
+             } else if (newCol.name.includes('__')) {
+                sourceType = 'joined'
+             }
+
+             // Merge Semantic
+             let semantic = oldCol?.semantic
+             if (sourceType === 'metric' && metricDef?.description) {
+                // Keep existing semantic fields (aliases, etc.) but update description from definition
+                semantic = { 
+                  ...(semantic || { isVisibleToAI: true }), 
+                  description: metricDef.description 
+                }
+             }
+
+             if (oldCol) {
+                return {
+                   ...newCol,
+                   sampleValues: samples.length > 0 ? samples : oldCol.sampleValues,
+                   userType: oldCol.userType,
+                   semantic,
+                   sourceType
+                }
+             }
+             return { ...newCol, sampleValues: samples, sourceType, semantic }
+          })
+
+          // 6. Update FileNode
+          set(prev => ({
+            files: prev.files.map(f => f.id === fileId ? { 
+              ...f, 
+              columns: mergedColumns, 
+              lastModified: Date.now(),
+              viewSchema: mergedColumns 
+            } : f)
+          }))
+
+          useToastStore.getState().addToast({
+            title: 'Metadata Synced',
+            type: 'success'
+          })
+        } catch (e: any) {
+          console.error('refreshFileMetadata failed', e)
+        }
       },
 
       reset: () => set(initialProjectState),
 
       closeProject: async () => {
         try {
-          await window.electronAPI.invoke('project:close')
+          await window.electronAPI.projectClose()
         } catch (e) {
           console.error('Failed to close project on backend', e)
         }
@@ -1494,6 +1653,40 @@ export const useProjectStore = create<ProjectState>()(
           isRestoring: false,
         })
       },
+
+      saveTableView: (fileId, view) =>
+        set(state => {
+          const currentViews = (state.tableViews || {})[fileId] || []
+          const exists = currentViews.find(v => v.id === view.id)
+          const nextViews = exists 
+            ? currentViews.map(v => v.id === view.id ? view : v)
+            : [...currentViews, view]
+          
+          return {
+            tableViews: {
+              ...(state.tableViews || {}),
+              [fileId]: nextViews
+            }
+          }
+        }),
+
+      deleteTableView: (fileId, viewId) =>
+        set(state => ({
+          tableViews: {
+            ...(state.tableViews || {}),
+            [fileId]: ((state.tableViews || {})[fileId] || []).filter(v => v.id !== viewId)
+          }
+        })),
+
+      updateTableView: (fileId, viewId, updates) =>
+        set(state => ({
+          tableViews: {
+            ...(state.tableViews || {}),
+            [fileId]: ((state.tableViews || {})[fileId] || []).map(v => 
+              v.id === viewId ? { ...v, ...updates } : v
+            )
+          }
+        })),
     }),
     {
       name: 'wansan-project-v2',
@@ -1506,6 +1699,7 @@ export const useProjectStore = create<ProjectState>()(
           activeSessionId: state.activeSessionId,
           sidebarMode: state.sidebarMode,
           activeView: state.activeView,
+          appMode: state.appMode,
         } as unknown as ProjectState
       },
       merge: (persistedState: any, currentState) => {
@@ -1552,4 +1746,66 @@ export const selectAllRelations = (state: ProjectState) => {
       autoDetected: r.autoDetected,
     }))
   )
+}
+
+export const selectTableViewsForFile = (state: ProjectState, fileId: string) =>
+  (state.tableViews || {})[fileId] || []
+
+export const selectViewById = (
+  state: ProjectState,
+  fileId: string,
+  viewId: string | null
+) => {
+  if (!viewId) return null
+  return selectTableViewsForFile(state, fileId).find(v => v.id === viewId) || null
+}
+
+export const calculateExplorerDirty = (
+  activeView: import('@shared/types/project').TableView | null,
+  filterApplied: import('@shared/types/filter').FilterState,
+  sorting: Array<{ id: string; desc: boolean }>,
+  columnVisibility: Record<string, boolean>,
+  columnOrder: string[],
+  defaultColumnOrder: string[]
+) => {
+  if (!activeView) {
+    const defaultFilters: import('@shared/types/filter').FilterState = {
+      conjunction: 'AND',
+      conditions: [],
+    }
+    return (
+      JSON.stringify(filterApplied) !== JSON.stringify(defaultFilters) ||
+      JSON.stringify(sorting) !== JSON.stringify([]) ||
+      JSON.stringify(columnVisibility) !== JSON.stringify({}) ||
+      JSON.stringify(columnOrder) !== JSON.stringify(defaultColumnOrder)
+    )
+  }
+
+  const normalizedFilters = Array.isArray(activeView.filters)
+    ? { conjunction: 'AND' as const, conditions: activeView.filters }
+    : activeView.filters
+  const normalizedVisibility: Record<string, boolean> = {}
+  activeView.columnConfig?.hidden?.forEach(col => {
+    normalizedVisibility[col] = false
+  })
+
+  return (
+    JSON.stringify(filterApplied) !== JSON.stringify(normalizedFilters) ||
+    JSON.stringify(sorting) !== JSON.stringify(activeView.sort || []) ||
+    JSON.stringify(columnVisibility) !== JSON.stringify(normalizedVisibility) ||
+    JSON.stringify(columnOrder) !==
+      JSON.stringify(activeView.columnConfig?.order || defaultColumnOrder)
+  )
+}
+
+export const resolveExplorerViewMode = (
+  hasActiveView: boolean,
+  dirty: boolean,
+  partiallyInvalid: boolean
+): import('@shared/types/project').ExplorerViewMode => {
+  if (partiallyInvalid) return 'partially_invalid'
+  if (!hasActiveView && !dirty) return 'default_clean'
+  if (hasActiveView && !dirty) return 'saved_clean'
+  if (hasActiveView && dirty) return 'saved_dirty'
+  return 'unsaved_custom'
 }

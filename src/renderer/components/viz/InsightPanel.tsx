@@ -19,17 +19,20 @@ import {
   Edit2,
   Save,
   X as CloseIcon,
+  type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { SimpleMarkdown } from '../ui/simple-markdown'
-import type { InsightResult } from '@shared/types/dashboard'
+import type { InsightResult, ReportData } from '@shared/types/dashboard'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import TextareaAutosize from 'react-textarea-autosize'
 import { Analytics } from '../../services/analytics'
 
 type InsightState = 'idle' | 'consent' | 'analyzing' | 'done' | 'error'
 
-const SENTIMENT_ICONS: Record<string, { icon: any; color: string; label: string }> = {
+type FindingSentiment = NonNullable<InsightResult['findings'][number]['sentiment']> | 'neutral'
+
+const SENTIMENT_ICONS: Record<FindingSentiment, { icon: LucideIcon; color: string; label: string }> = {
   positive: { icon: TrendingUp, color: 'text-emerald-500', label: 'Positive' },
   negative: { icon: TrendingDown, color: 'text-rose-500', label: 'Negative' },
   warning: { icon: AlertTriangle, color: 'text-amber-500', label: 'Warning' },
@@ -48,7 +51,7 @@ interface InsightPanelProps {
   /** Chart type for context */
   chartType?: string
   /** Current chart configuration */
-  config?: any
+  config?: ReportData['vizConfig']
   /** Existing insight text if available */
   insight?: string | InsightResult
   /** Called to request AI insight generation */
@@ -160,8 +163,8 @@ export function InsightPanel({
         duration: Date.now() - startTime,
         has_instructions: !!instructions,
       })
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate insight')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to generate insight')
       setState('error')
     }
   }, [chartData, onGenerateInsight, onExpandChange, chartType, dataPointCount, instructions])
@@ -194,7 +197,10 @@ export function InsightPanel({
     setActiveFindingId(null)
   }
 
-  const updateFinding = (id: string, updates: any) => {
+  const updateFinding = (
+    id: string,
+    updates: Partial<InsightResult['findings'][number]>
+  ) => {
     if (!editBuffer) return
     setEditEditBuffer({
       ...editBuffer,
@@ -692,7 +698,7 @@ function InsightConsentForm({
   )
 }
 
-function IconSelector({ current, onSelect }: { current: string, onSelect: (key: string) => void }) {
+function IconSelector({ current, onSelect }: { current: FindingSentiment; onSelect: (key: FindingSentiment) => void }) {
     const [isOpen, setIsOpen] = useState(false)
     const currentConfig = SENTIMENT_ICONS[current] || SENTIMENT_ICONS.neutral
     const CurrentIcon = currentConfig.icon
@@ -719,7 +725,7 @@ function IconSelector({ current, onSelect }: { current: string, onSelect: (key: 
                                 <button
                                     key={key}
                                     onClick={() => {
-                                        onSelect(key)
+                                        onSelect(key as FindingSentiment)
                                         setIsOpen(false)
                                     }}
                                     className={cn(

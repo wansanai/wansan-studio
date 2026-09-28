@@ -11,6 +11,7 @@ import {
 } from '../stores/useSettingsStore'
 import { useTranslation } from 'react-i18next'
 import legacyData from '@shared/legacy-data.ts'
+import type { GetSchemaResponse } from '@shared/api-types'
 
 interface LogEntry {
   id: number
@@ -217,7 +218,7 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
 
   const printAllTables = useCallback(async () => {
     try {
-      const result = (await window.electronAPI.getSchema()) as any
+      const result = (await window.electronAPI.getSchema()) as GetSchemaResponse
       console.log('📊 Fetching all tables from DuckDB...', result)
 
       if (result.success && result.data && Array.isArray(result.data.tables)) {
@@ -225,11 +226,11 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
         console.log(`✅ Found ${tables.length} table(s):`)
 
         // 以对象形式打印，方便在控制台折叠查看
-        const tableSummary = tables.reduce((acc: any, table: any) => {
+        const tableSummary = tables.reduce<Record<string, { description: string; columnCount: number; columns: Array<{ name: string; type: string }> }>>((acc, table) => {
           acc[table.tableName || 'unnamed'] = {
             description: table.description || 'N/A',
             columnCount: table.columns?.length || 0,
-            columns: (table.columns || []).map((col: any) => ({
+            columns: (table.columns || []).map((col) => ({
               name: col.name,
               type: col.type || 'unknown',
             })),
@@ -244,6 +245,11 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
     } catch (error) {
       console.error('❌ Failed to fetch tables:', error)
     }
+  }, [])
+
+  const printFileNodes = useCallback(() => {
+    const files = useProjectStore.getState().files
+    console.log('📂 Current Project FileNodes:', files)
   }, [])
 
   useEffect(() => {
@@ -405,6 +411,12 @@ export function DevConsole({ defaultOpen = false }: DevConsoleProps) {
                 className="px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded text-sm"
               >
                 🗄️ Print All Tables
+              </button>
+              <button
+                onClick={printFileNodes}
+                className="px-3 py-2 bg-purple-700 hover:bg-purple-600 rounded text-sm"
+              >
+                📂 Print FileNodes
               </button>
               <button
                 onClick={resetApp}

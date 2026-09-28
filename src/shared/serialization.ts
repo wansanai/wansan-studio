@@ -1,3 +1,4 @@
+import type { PersistStorage, StorageValue } from 'zustand/middleware'
 import { ColumnType } from './types'
 
 /**
@@ -7,7 +8,7 @@ import { ColumnType } from './types'
 /**
  * Custom JSON replacer function that handles BigInt serialization
  */
-export function jsonReplacer(key: string, value: any): any {
+export function jsonReplacer(_key: string, value: unknown): unknown {
   if (typeof value === 'bigint') {
     return value.toString() + 'n'
   }
@@ -17,7 +18,7 @@ export function jsonReplacer(key: string, value: any): any {
 /**
  * Custom JSON reviver function that handles BigInt deserialization
  */
-export function jsonReviver(key: string, value: any): any {
+export function jsonReviver(_key: string, value: unknown): unknown {
   if (typeof value === 'string' && /^\d+n$/.test(value)) {
     return BigInt(value.slice(0, -1))
   }
@@ -34,7 +35,7 @@ export function stringify(data: unknown, space?: string | number): string {
 /**
  * Parse a JSON string with BigInt support
  */
-export function parse<T = any>(json: string): T {
+export function parse<T = unknown>(json: string): T {
   return JSON.parse(json, jsonReviver) as T
 }
 
@@ -42,19 +43,21 @@ export function parse<T = any>(json: string): T {
  * Create a custom storage object for zustand persist middleware
  * that handles BigInt serialization
  */
-export function createBigIntStorage(storage: Storage = localStorage) {
+export function createBigIntStorage<S>(
+  storage: Storage = localStorage
+): PersistStorage<S> {
   return {
     getItem: (name: string) => {
       const str = storage.getItem(name)
       if (!str) return null
       try {
-        return parse(str)
+        return parse<StorageValue<S>>(str)
       } catch (e) {
         console.error('Failed to parse storage item:', e)
         return null
       }
     },
-    setItem: (name: string, value: unknown) => {
+    setItem: (name: string, value: StorageValue<S>) => {
       try {
         const str = stringify(value)
         storage.setItem(name, str)

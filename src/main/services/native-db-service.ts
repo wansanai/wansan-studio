@@ -1,5 +1,10 @@
-import { dbClient } from './db-service/client'
 import { formatForDisplay } from '../../shared/serialization'
+import type { GetSchemaResponse } from '../../shared/api-types'
+import { dbClient } from './db-service/client'
+
+type QuerySchemaMeta = {
+  columnFields?: Array<{ name: string; type: string }>
+}
 
 export class NativeDatabaseService {
   constructor() {}
@@ -13,36 +18,35 @@ export class NativeDatabaseService {
     )
   }
 
-  async query(sql: string): Promise<any[]> {
+  async query(sql: string): Promise<Record<string, unknown>[]> {
     console.log('[NativeDB] Query:', sql)
     return dbClient.executeQuery(sql)
   }
 
-
-
   async queryWithSchema(sql: string): Promise<{
-    data: any[]
+    data: Record<string, unknown>[]
     columnFields: Array<{ name: string; type: string }>
   }> {
     console.log('[NativeDB] QueryWithSchema:', sql)
     const res = await dbClient.executeQueryFull(sql)
-    
     const data = res.data || []
-    const columnFields = res.meta?.columnFields || []
+    const columnFields =
+      (res.meta as QuerySchemaMeta | undefined)?.columnFields || []
 
-    // Post-process: Format Date/Time columns to strings to prevent them being shown as raw timestamps
-    // We do NOT format numeric columns here to preserve them for chart rendering
     if (data.length > 0 && columnFields.length > 0) {
-      const dateColumns = columnFields.filter(col => {
-        const type = col.type.toUpperCase()
+      const dateColumns = columnFields.filter((column) => {
+        const type = column.type.toUpperCase()
         return type.includes('DATE') || type.includes('TIMESTAMP')
       })
 
       if (dateColumns.length > 0) {
         for (const row of data) {
-          for (const col of dateColumns) {
-            if (row[col.name] !== null && row[col.name] !== undefined) {
-              row[col.name] = formatForDisplay(row[col.name], col.type)
+          for (const column of dateColumns) {
+            if (row[column.name] !== null && row[column.name] !== undefined) {
+              row[column.name] = formatForDisplay(
+                row[column.name],
+                column.type
+              )
             }
           }
         }
@@ -60,8 +64,8 @@ export class NativeDatabaseService {
     await dbClient.executeQuery(sql)
   }
 
-  async getSchema(tableName?: string): Promise<any> {
-    return dbClient.getSchema(tableName)
+  async getSchema(tableName?: string): Promise<GetSchemaResponse['data']> {
+    return (await dbClient.getSchema(tableName)) as GetSchemaResponse['data']
   }
 
   async checkpoint(): Promise<void> {
@@ -69,12 +73,11 @@ export class NativeDatabaseService {
   }
 
   async dropAllTables(): Promise<void> {
-    // Get all tables first
     const schema = await this.getSchema()
-    const tables = schema.tables || []
+    const tables = schema?.tables ?? []
 
-    for (const t of tables) {
-      await dbClient.deleteTable(t.tableName)
+    for (const table of tables) {
+      await dbClient.deleteTable(table.tableName)
     }
   }
 

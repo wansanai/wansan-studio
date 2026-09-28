@@ -139,7 +139,7 @@ export function WelcomeScreen({
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
+    <div className="flex-1 flex items-start justify-center p-8 pt-[15vh]">
       {gateNode}
       {/* Drop Zone - 核心空态界面 */}
       <div

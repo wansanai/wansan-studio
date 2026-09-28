@@ -22,7 +22,6 @@ import {
   PanelLeft,
   RotateCcw,
 } from 'lucide-react'
-import { DashboardCanvasV3 } from './components/dashboard-v3'
 import { cn } from '@/utils/cn'
 import { useDataRehydrate } from '@/hooks/use-data-rehydrate'
 import { useTranslation } from 'react-i18next'
@@ -43,7 +42,6 @@ import { SchemaWarningModal } from './components/modals/SchemaWarningModal'
 import { RefreshConfirmModal } from './components/modals/RefreshConfirmModal'
 import { SettingsDialog } from './components/settings/SettingsDialog'
 import { GlobalSqlLab } from './components/report/GlobalSqlLab'
-import { DataPreviewPanel } from './components/report/data-preview-panel'
 import { useAutoCleanup } from './hooks/use-auto-cleanup'
 import { MigrationWizard } from './components/migration/MigrationWizard'
 import { useMigrationStore } from './stores/useMigrationStore'
@@ -60,7 +58,6 @@ function App() {
   useDataRehydrate()
   useProjectInit()
   useAutoCleanup()
-  // useStoreMigration()
 
   const { isMigrationNeeded, isChecking, checkStatus } = useMigrationStore()
   const { status: saveStatus, lastError: saveError, forceSave } = useAutoSave()
@@ -81,30 +78,24 @@ function App() {
     checkStatus()
   }, [checkStatus])
 
-  const [isChatCollapsed, setIsChatCollapsed] = useState(false)
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false)
+  
+  const isPresentationMode = useUIStore(s => s.isPresentationMode)
+  const setPresentationMode = useUIStore(s => s.setPresentationMode)
 
-  const sidebarLayout = useUIStore(s => s.sidebarLayout)
-  const contentLayout = useUIStore(s => s.contentLayout)
-  const lastContentSplit = useUIStore(s => s.lastContentSplit)
-  const setSidebarLayout = useUIStore(s => s.setSidebarLayout)
-  const setContentLayout = useUIStore(s => s.setContentLayout)
-  const setLastContentSplit = useUIStore(s => s.setLastContentSplit)
+  const sidebarWidth = useUIStore(s => s.sidebarWidth)
+  const setSidebarWidth = useUIStore(s => s.setSidebarWidth)
+  const appMode = useProjectStore(s => s.appMode)
+  
+  const analysisLayoutMode = useUIStore(s => s.analysisLayoutMode)
+  const setAnalysisLayoutMode = useUIStore(s => s.setAnalysisLayoutMode)
 
-  const [isRightCollapsed, setIsRightCollapsed] = useState(true)
-  const [isPresentationMode, setIsPresentationMode] = useState(false)
-  const language = useSettingsStore(state => state.language)
-  // const hasCompletedOnboarding = useSettingsStore(
-  //   state => state.hasCompletedOnboarding,
-  // )
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
-  const middlePanelRef = useRef<ImperativePanelHandle>(null)
-  const rightPanelRef = useRef<ImperativePanelHandle>(null)
   const { t } = useTranslation('common')
   const platform = usePlatform()
   const [isStoreReady, setIsStoreReady] = useState(false)
+  const language = useSettingsStore(state => state.language)
 
-  const activeView = useProjectStore(state => state.activeView)
   const isRestoring = useProjectStore(state => state.isRestoring)
   const isRefreshing = useProjectStore(state => state.isRefreshing)
   const isLoading = isRestoring || isRefreshing
@@ -125,9 +116,6 @@ function App() {
   // Sync AI config to main process on startup
   useEffect(() => {
     const syncAIConfig = async () => {
-      // First load sensitive data (API Key) from secure storage to frontend state
-      // This is purely for UI display (masked key) and local state consistency.
-      // The Main process AIService already loads the key directly from secure storage.
       await useSettingsStore.getState().loadSensitiveData()
       console.log('[App] Synced sensitive data to UI state')
     }
@@ -136,58 +124,14 @@ function App() {
 
   // 处理导入数据 - 触发文件选择或其他导入方式
   const handleImportData = useCallback(() => {
-    // 这里可以扩展为打开一个导入对话框
-    // 目前简单地让用户知道可以通过主区域的 Drop Zone 导入
-    // 或者触发系统文件选择器
     if (window.electronAPI) {
       window.electronAPI.selectFile().then(result => {
         if (result.success && result.data) {
-          // 通过 WelcomeScreen 的逻辑处理
-          // 这里可以直接触发文件处理，但为了保持逻辑一致性，
-          // 提示用户使用 Drop Zone
           alert('请将文件拖拽到右侧区域，或在空状态页面点击选择文件')
         }
       })
     }
   }, [])
-
-  // Layout Mode Logic
-  type LayoutMode = 'chat' | 'split' | 'board'
-
-  const currentLayoutMode: LayoutMode = (() => {
-    if (isChatCollapsed && !isRightCollapsed) return 'board'
-    if (!isChatCollapsed && isRightCollapsed) return 'chat'
-    return 'split'
-  })()
-
-  const handleLayoutModeChange = (mode: LayoutMode) => {
-    if (mode === 'chat') {
-      middlePanelRef.current?.expand?.()
-      middlePanelRef.current?.resize?.(100) // Full width in content group
-      setIsChatCollapsed(false)
-      rightPanelRef.current?.collapse?.()
-      setIsRightCollapsed(true)
-    } else if (mode === 'split') {
-      middlePanelRef.current?.expand?.()
-      setIsChatCollapsed(false)
-
-      // Restore user preference relative to CONTENT GROUP
-      const targetMiddle = lastContentSplit[0] || 40
-      const targetRight = lastContentSplit[1] || 60
-
-      middlePanelRef.current?.resize?.(targetMiddle)
-
-      rightPanelRef.current?.expand?.()
-      rightPanelRef.current?.resize?.(targetRight)
-      setIsRightCollapsed(false)
-    } else if (mode === 'board') {
-      middlePanelRef.current?.collapse?.()
-      setIsChatCollapsed(true)
-      rightPanelRef.current?.expand?.()
-      rightPanelRef.current?.resize?.(100)
-      setIsRightCollapsed(false)
-    }
-  }
 
   const toggleLeft = () => {
     if (!leftPanelRef.current) return
@@ -204,12 +148,32 @@ function App() {
   const togglePresentation = useCallback(() => {
     if (isPresentationMode) {
       window.electronAPI?.windowControl?.('exit-fullscreen')
-      setIsPresentationMode(false)
+      setPresentationMode(false)
     } else {
       window.electronAPI?.windowControl?.('enter-fullscreen')
-      setIsPresentationMode(true)
+      setPresentationMode(true)
     }
-  }, [isPresentationMode])
+  }, [isPresentationMode, setPresentationMode])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isPresentationMode) {
+        togglePresentation()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPresentationMode, togglePresentation])
+
+  // Sync presentation mode from window state
+  useEffect(() => {
+    if (!window.electronAPI) return
+    return window.electronAPI.onWindowStateChanged(({ isFullScreen }) => {
+        if (isFullScreen !== isPresentationMode) {
+            setPresentationMode(isFullScreen)
+        }
+    })
+  }, [isPresentationMode, setPresentationMode])
 
   useEffect(() => {
     if (isStoreReady && language && i18n.language !== language) {
@@ -224,46 +188,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const handleOpenDashboard = () => {
-      const right = rightPanelRef.current
-      if (right) {
-        right.expand?.()
-        const targetSize = useUIStore.getState().lastContentSplit[1] || 60
-        right.resize?.(targetSize)
-      }
-      setIsRightCollapsed(false)
-    }
-    window.addEventListener('wansan:open-dashboard', handleOpenDashboard)
-    return () =>
-      window.removeEventListener('wansan:open-dashboard', handleOpenDashboard)
-  }, [])
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isPresentationMode) {
-        togglePresentation()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isPresentationMode, togglePresentation])
-
-  // 监听窗口全屏状态变化（处理系统级退出全屏）
-  useEffect(() => {
     if (!window.electronAPI) return
-
-    let unsubWindow: (() => void) | undefined
-    if (window.electronAPI.onWindowStateChanged) {
-      unsubWindow = window.electronAPI.onWindowStateChanged(
-        ({ isFullScreen }) => {
-          if (isFullScreen && !isPresentationMode) {
-            setIsPresentationMode(true)
-          } else if (!isFullScreen && isPresentationMode) {
-            setIsPresentationMode(false)
-          }
-        }
-      )
-    }
 
     // Listen for file progress
     let unsubProgress: (() => void) | undefined
@@ -276,10 +201,9 @@ function App() {
     }
 
     return () => {
-      unsubWindow?.()
       unsubProgress?.()
     }
-  }, [isPresentationMode])
+  }, [])
 
   useEffect(() => {
     if (!window.electronAPI) return
@@ -295,15 +219,6 @@ function App() {
   const handleHeaderDoubleClick = useCallback(() => {
     window.electronAPI?.windowControl?.('toggle-maximize')
   }, [])
-
-  // if (!hasCompletedOnboarding) {
-  //   return (
-  //     <div className="h-screen w-screen overflow-hidden bg-zinc-50 flex flex-col">
-  //       <Toaster />
-  //       <OnboardingFlow />
-  //     </div>
-  //   )
-  // }
 
   if (isChecking) {
     return (
@@ -380,7 +295,7 @@ function App() {
             <div
               className={cn(
                 'flex items-center gap-3 non-draggable shrink-0',
-                platform === 'darwin' && !isPresentationMode ? 'pl-16' : 'pl-4'
+                platform === 'darwin' ? 'pl-16' : 'pl-4'
               )}
             >
               {/* Logo Image */}
@@ -442,72 +357,78 @@ function App() {
                       <PanelLeft className="h-3.5 w-3.5" />
                     </button>
 
-                    <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-700 mx-1.5 opacity-50" />
-
-                    {/* Layout Switcher: Chat | Split | Board */}
-                    <div className="flex items-center bg-zinc-200/50 rounded-md p-0.5 gap-0.5">
-                      <button
-                        onClick={() => handleLayoutModeChange('chat')}
-                        className={cn(
-                          'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
-                          currentLayoutMode === 'chat'
-                            ? 'bg-white text-zinc-900 shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
-                        )}
-                        title={t('focus_chat', 'Chat Only')}
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                      </button>
-                      <button
-                        onClick={() => handleLayoutModeChange('split')}
-                        className={cn(
-                          'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
-                          currentLayoutMode === 'split'
-                            ? 'bg-white text-zinc-900 shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
-                        )}
-                        title={t('layout_split', 'Split View')}
-                      >
-                        <Columns className="h-3 w-3" />
-                      </button>
-                      <button
-                        onClick={() => handleLayoutModeChange('board')}
-                        className={cn(
-                          'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
-                          currentLayoutMode === 'board'
-                            ? 'bg-white text-zinc-900 shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
-                        )}
-                        title={t('dashboard_only', 'Dashboard')}
-                      >
-                        <LayoutDashboard className="h-3 w-3" />
-                      </button>
-                    </div>
-
-                    <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-700 mx-1.5 opacity-50" />
+                    {/* Analysis Mode Layout Controls */}
+                    {appMode === 'analysis' && (
+                        <>
+                            <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-700 mx-1.5 opacity-50" />
+                            <div className="flex items-center bg-zinc-200/50 rounded-md p-0.5 gap-0.5">
+                              <button
+                                onClick={() => setAnalysisLayoutMode('chat')}
+                                className={cn(
+                                  'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
+                                  analysisLayoutMode === 'chat'
+                                    ? 'bg-white text-zinc-900 shadow-sm'
+                                    : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
+                                )}
+                                title={t('focus_chat', 'Chat Only')}
+                              >
+                                <MessageSquare className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => setAnalysisLayoutMode('split')}
+                                className={cn(
+                                  'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
+                                  analysisLayoutMode === 'split'
+                                    ? 'bg-white text-zinc-900 shadow-sm'
+                                    : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
+                                )}
+                                title={t('layout_split', 'Split View')}
+                              >
+                                <Columns className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => setAnalysisLayoutMode('board')}
+                                className={cn(
+                                  'h-6 px-2 rounded-sm flex items-center justify-center transition-all text-[10px] font-medium gap-1.5',
+                                  analysisLayoutMode === 'board'
+                                    ? 'bg-white text-zinc-900 shadow-sm'
+                                    : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/50'
+                                )}
+                                title={t('dashboard_only', 'Dashboard')}
+                              >
+                                <LayoutDashboard className="h-3 w-3" />
+                              </button>
+                            </div>
+                        </>
+                    )}
                   </>
                 )}
-
-                {/* Toggle Presentation Mode */}
-                <button
-                  className={cn(
-                    'h-7 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95',
-                    isPresentationMode
-                      ? 'bg-zinc-900 text-white shadow-md dark:bg-zinc-100 dark:text-zinc-900'
-                      : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-200/50'
-                  )}
-                  onClick={togglePresentation}
-                  title={isPresentationMode ? t('exit') : t('present')}
-                >
-                  {isPresentationMode ? (
-                    <RotateCcw className="h-3 w-3" />
-                  ) : (
-                    <MonitorPlay className="h-3 w-3" />
-                  )}
-                  <span className="hidden lg:inline">
-                    {isPresentationMode ? t('exit') : t('present')}
-                  </span>
-                </button>
+                
+                {appMode === 'analysis' && (
+                    <>
+                        <div className="h-3 w-px bg-zinc-300 dark:bg-zinc-700 mx-1.5 opacity-50" />
+                        {/* Toggle Presentation Mode */}
+                        <button
+                          className={cn(
+                            'h-7 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95',
+                            isPresentationMode
+                              ? 'bg-zinc-900 text-white shadow-md dark:bg-zinc-100 dark:text-zinc-900'
+                              : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-200/50'
+                          )}
+                          onClick={togglePresentation}
+                          title={isPresentationMode ? t('exit') : t('present')}
+                        >
+                          {isPresentationMode ? (
+                            <RotateCcw className="h-3 w-3" />
+                          ) : (
+                            <MonitorPlay className="h-3 w-3" />
+                          )}
+                          <span className="hidden lg:inline">
+                            {isPresentationMode ? t('exit') : t('present')}
+                          </span>
+                        </button>
+                    </>
+                )}
               </div>
             </div>
           </header>
@@ -515,87 +436,42 @@ function App() {
           <PanelGroup
             direction="horizontal"
             className="flex-1"
-            onLayout={setSidebarLayout}
+            onLayout={(sizes) => setSidebarWidth(sizes[0])}
           >
             {/* 左侧 Sidebar */}
             <Panel
               ref={leftPanelRef}
-              defaultSize={sidebarLayout[0]}
+              defaultSize={sidebarWidth}
               minSize={15}
               maxSize={20}
               collapsible
               collapsedSize={0}
               onCollapse={() => setIsLeftCollapsed(true)}
               onExpand={() => setIsLeftCollapsed(false)}
-              className={`border-r border-zinc-200 bg-zinc-50 dark:bg-zinc-900/50 transition-all duration-300 ${isLeftCollapsed ? 'min-w-0 border-none' : ''}`}
+              className={`border-r border-zinc-100 dark:border-zinc-800 bg-[#fbfbfa] dark:bg-zinc-900/80 transition-all duration-300 ${isLeftCollapsed ? 'min-w-0 border-none' : ''}`}
             >
-              <div className="h-full flex flex-col bg-zinc-50 dark:bg-zinc-900/50">
+              <div className="h-full flex flex-col">
                 <div className="flex-1 overflow-y-auto">
                   <Sidebar onImportData={handleImportData} />
                 </div>
               </div>
             </Panel>
 
-            <PanelResizeHandle className="w-2 flex justify-center bg-transparent hover:bg-zinc-50 transition-colors cursor-col-resize group focus:outline-none z-10">
-              <div className="w-px h-full bg-zinc-200 group-hover:bg-zinc-300 transition-colors" />
+            <PanelResizeHandle className="relative w-2 group transition-all duration-300 ease-in-out focus:outline-none z-30">
+              {/* Visual Line - Very subtle */}
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-zinc-200/50 dark:bg-zinc-800/50 group-hover:bg-indigo-300/50 transition-colors" />
+              
+              {/* Interaction Area & Grabber */}
+              <div className="absolute inset-y-0 -inset-x-2 flex items-center justify-center pointer-events-none">
+                <div className="w-1 h-8 rounded-full bg-zinc-400/0 group-hover:bg-indigo-400/40 group-active:bg-indigo-500 group-active:h-12 transition-all duration-500 ease-out shadow-sm" />
+              </div>
             </PanelResizeHandle>
 
-            {/* Main Content Wrapper (Chat + Dashboard) */}
+            {/* Main Workspace (Router) */}
             <Panel minSize={30}>
-              <PanelGroup
-                direction="horizontal"
-                onLayout={layout => {
-                  setContentLayout(layout)
-                  // Save split preference only if both are visible
-                  if (layout[0] > 10 && layout[1] > 10) {
-                    setLastContentSplit(layout)
-                  }
-                }}
-              >
-                {/* 主画布区域 - Chat/Workspace */}
-                <Panel
-                  ref={middlePanelRef}
-                  defaultSize={contentLayout[0]}
-                  minSize={25}
-                  collapsible
-                  collapsedSize={0}
-                  onCollapse={() => setIsChatCollapsed(true)}
-                  onExpand={() => setIsChatCollapsed(false)}
-                  className={`bg-white dark:bg-zinc-950 transition-all duration-500 pr-0.5 ${isPresentationMode ? 'min-w-0 border-none' : ''}`}
-                >
-                  <main className="wansan-canvas h-full flex flex-col relative bg-white dark:bg-zinc-950 transition-colors">
-                    <MainContent />
-                  </main>
-                </Panel>
-
-                <PanelResizeHandle className="w-2 flex justify-center bg-transparent hover:bg-zinc-50 transition-colors cursor-col-resize group focus:outline-none z-10">
-                  <div className="w-px h-full bg-zinc-200 group-hover:bg-zinc-300 transition-colors" />
-                </PanelResizeHandle>
-
-                {/* 右侧 Report Canvas */}
-                <Panel
-                  defaultSize={contentLayout[1]}
-                  minSize={25}
-                  ref={rightPanelRef}
-                  collapsible
-                  collapsedSize={0}
-                  onCollapse={() => setIsRightCollapsed(true)}
-                  onExpand={() => setIsRightCollapsed(false)}
-                  className={`bg-zinc-100/60 dark:bg-zinc-900 transition-all duration-300 ${isRightCollapsed ? 'min-w-0' : ''}`}
-                >
-                  {activeView === 'chat' ? (
-                    <DashboardCanvasV3
-                      isPresentationMode={isPresentationMode}
-                    />
-                  ) : activeView === 'schema' ? (
-                    <div className="h-full w-full">
-                      <div className="h-full w-full bg-white dark:bg-black border border-zinc-200 shadow-sm overflow-hidden">
-                        <DataPreviewPanel />
-                      </div>
-                    </div>
-                  ) : null}
-                </Panel>
-              </PanelGroup>
+              <main className="wansan-canvas h-full flex flex-col relative bg-white dark:bg-zinc-950 transition-colors">
+                <MainContent />
+              </main>
             </Panel>
           </PanelGroup>
 

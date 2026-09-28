@@ -14,11 +14,10 @@ export async function loadDemoData(
     const tableName = 't_demo_superstore'
 
     // 1. 摄取到 DuckDB
-    const result = await window.electronAPI.invoke(
-      'ingest-json',
+    const result = await window.electronAPI.ingestJson({
       tableName,
-      DEMO_DATA
-    )
+      rows: DEMO_DATA
+    })
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to ingest demo data')

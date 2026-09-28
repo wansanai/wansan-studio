@@ -8,6 +8,7 @@
   "tabs": {
     "ai": "AI Model",
     "domain": "Domain Knowledge",
+    "audit": "Cost Audit",
     "general": "General",
     "data": "Data",
     "about": "About"
@@ -69,6 +70,29 @@
     "reset_button": "Reset Settings",
     "reset_title": "Settings reset",
     "reset_desc": "All settings restored to defaults."
+  },
+  "audit": {
+    "title": "Cost Control & Audit",
+    "daily_usage": "Est. Today's Cost",
+    "tokens": "Daily Tokens (In/Out)",
+    "total_cost": "All-time Cost (Est.)",
+    "total_tokens": "Total Tokens (In/Out)",
+    "budget_status": "Budget Status",
+    "resets_daily": "Resets daily (Estimates only)",
+    "active": "Active",
+    "disabled": "Disabled",
+    "protection_toggle": "Enable Protection",
+    "protection_enabled": "Protection on",
+    "protection_disabled": "Budget protection is off",
+    "daily_hard_limit": "Daily Hard Limit ($)",
+    "hard_limit_desc": "Costs are calculated based on tokens. Actual billing depends on your provider.",
+    "project_soft_limit": "Batch Warning Threshold ($)",
+    "soft_limit_desc": "Confirmations required for batch jobs exceeding this estimated cost.",
+    "price_multiplier": "Price Multiplier",
+    "multiplier_desc": "Scales the base price of $1.00 / 1M Tokens. (e.g. 0.14 for DeepSeek, 1.0+ for premium models)",
+    "effective_price_label": "Effective Unit Price",
+    "save_btn": "Save Changes",
+    "saved": "Settings saved"
   },
   "about": {
     "version": "Wansan Studio v{{version}}",

@@ -19,8 +19,15 @@
     "cancel": "取消",
     "close": "关闭",
     "save": "保存",
+    "show_logic": "显示思路",
+    "hide_logic": "隐藏思路",
     "send_to_chat": "发送至聊天",
-    "add_metric": "添加智能指标"
+    "add_metric": "添加智能指标",
+    "run_success": "查询执行成功",
+    "execution_time": "耗时",
+    "unlock_pro": "解锁编辑器 (Pro)",
+    "read_only": "只读预览模式",
+    "editing": "正在编辑图表"
   },
   "smart_metric": {
     "add_title": "添加指标",
@@ -53,5 +60,11 @@
     "linked_to": "已关联:",
     "no_links": "无关联"
   },
-  "smart_metrics": "智能指标"
+  "smart_metrics": "智能指标",
+  "analyzing_semantics_title": "正在分析语义...",
+  "analyzing_semantics_desc": "AI 正在深度理解您的数据结构。",
+  "review_semantics_title": "确认语义建议",
+  "review_semantics_desc": "请检查并确认 AI 生成的业务元数据和指标建议。",
+  "has_extraction_hint": "包含提取建议",
+  "no_metric_suggestions": "未发现单表计算指标建议。"
 }

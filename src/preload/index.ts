@@ -1,173 +1,187 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import {
+  contextBridge,
+  ipcRenderer,
+  type IpcRendererEvent,
+  webUtils,
+} from 'electron'
 import { ElectronAPI } from '../shared/electron-api'
+import { InsightGenerationContext } from '../shared/types/dashboard'
 
-// 定义暴露给渲染进程的 API
+type FirstArg<T extends (...args: unknown[]) => unknown> = Parameters<T>[0]
+type CallbackPayload<T> = T extends (payload: infer P) => unknown ? P : never
+
+type PrepareFileParams = FirstArg<ElectronAPI['prepareFile']>
+type UniqueTableNameParams = FirstArg<ElectronAPI['getUniqueTableName']>
+type GenerateSQLParams = FirstArg<ElectronAPI['generateSQL']>
+type AskAIParams = FirstArg<ElectronAPI['askAI']>
+type FixSQLParams = FirstArg<ElectronAPI['fixSQL']>
+type AnalyzeContextParams = FirstArg<ElectronAPI['analyzeContext']>
+type AnalyzeSemanticsParams = FirstArg<ElectronAPI['analyzeSemantics']>
+type GenerateMetricExpressionParams = FirstArg<ElectronAPI['generateMetricExpression']>
+type AIPreviewExtractParams = FirstArg<ElectronAPI['aiPreviewExtract']>
+type AIBatchExtractParams = FirstArg<ElectronAPI['aiBatchExtract']>
+type DropAIColumnParams = FirstArg<ElectronAPI['dropAIColumn']>
+type SetTokenConfigParams = FirstArg<ElectronAPI['setTokenConfig']>
+type SetAIConfigParams = FirstArg<ElectronAPI['setAIConfig']>
+type VerifyAIConnectionParams = FirstArg<ElectronAPI['verifyAIConnection']>
+type ValidateColumnTypesParams = FirstArg<ElectronAPI['validateColumnTypes']>
+type ReIngestFileParams = FirstArg<ElectronAPI['reIngestFile']>
+type IngestPreCheckParams = FirstArg<ElectronAPI['ingestPreCheck']>
+type AppendDataParams = FirstArg<ElectronAPI['appendData']>
+type CreateTableFromSourceParams = FirstArg<ElectronAPI['createTableFromSource']>
+type CleanupIngestionParams = FirstArg<ElectronAPI['cleanupIngestion']>
+type IngestJsonParams = FirstArg<ElectronAPI['ingestJson']>
+type TestDBConnectionParams = FirstArg<ElectronAPI['testDBConnection']>
+type ListDBTablesParams = FirstArg<ElectronAPI['listDBTables']>
+type SyncDBTableParams = FirstArg<ElectronAPI['syncDBTable']>
+type ExportPDFParams = FirstArg<ElectronAPI['exportPDF']>
+type SaveImageParams = FirstArg<ElectronAPI['saveImage']>
+type SaveFileParams = FirstArg<ElectronAPI['saveFile']>
+type ExportReportParams = FirstArg<ElectronAPI['exportReport']>
+type ExportWebReportParams = FirstArg<ElectronAPI['exportWebReport']>
+type ExportExcelParams = FirstArg<ElectronAPI['exportExcel']>
+type SecureSetParams = FirstArg<ElectronAPI['secureSet']>
+type ProjectCreateParams = FirstArg<ElectronAPI['projectCreate']>
+type ProjectSaveParams = FirstArg<ElectronAPI['projectSave']>
+
+type WindowStateCallback = FirstArg<ElectronAPI['onWindowStateChanged']>
+type WindowState = CallbackPayload<WindowStateCallback>
+type FileProgressCallback = FirstArg<ElectronAPI['onFileProgress']>
+type FileProgressData = CallbackPayload<FileProgressCallback>
+type ParseProgressCallback = FirstArg<ElectronAPI['onParseProgress']>
+type ParseProgressData = CallbackPayload<ParseProgressCallback>
+type RemoteConfigCallback = FirstArg<ElectronAPI['onRemoteConfig']>
+type RemoteConfigData = CallbackPayload<RemoteConfigCallback>
+type BatchProgressCallback = FirstArg<ElectronAPI['onBatchProgress']>
+type BatchProgressData = CallbackPayload<BatchProgressCallback>
+type BatchCompleteCallback = FirstArg<ElectronAPI['onBatchComplete']>
+type BatchCompleteData = CallbackPayload<BatchCompleteCallback>
+
 const electronAPI: ElectronAPI = {
-  // IPC 通信
-  invoke: (channel: string, ...args: any[]) =>
+  invoke: (channel: string, ...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args),
 
-  // 文件操作
-  selectFile: () => ipcRenderer.invoke('select-file'),
-  selectFiles: () => ipcRenderer.invoke('select-files'), // 多文件选择
-  selectDirectory: () => ipcRenderer.invoke('select-directory'),
-  parseFile: (filePath: string) => ipcRenderer.invoke('parse-file', filePath),
-  inspectFile: (filePath: string) => ipcRenderer.invoke('file:inspect', filePath),
-  prepareFile: (filePath: string, sourceName: string, readOptions?: Record<string, any>) => ipcRenderer.invoke('file:prepare', filePath, sourceName, readOptions),
+  selectFile: () => ipcRenderer.invoke('file.selectFile'),
+  selectFiles: () => ipcRenderer.invoke('file.selectFiles'),
+  selectDirectory: () => ipcRenderer.invoke('file.selectDirectory'),
+  parseFile: (filePath: string) => ipcRenderer.invoke('file.parseFile', filePath),
+  inspectFile: (filePath: string) =>
+    ipcRenderer.invoke('file.inspectFile', filePath),
+  prepareFile: (params: PrepareFileParams) =>
+    ipcRenderer.invoke('file.prepareFile', params),
 
-  // 数据库操作
-  runSQL: (sql: string) => ipcRenderer.invoke('run-sql', sql),
-  getUniqueTableName: (name: string, sheetName?: string) =>
-    ipcRenderer.invoke('get-unique-table-name', name, sheetName),
-  generateSQL: (prompt: string, schema: any) =>
-    ipcRenderer.invoke('generate-sql', prompt, schema),
-  getSchema: (tableName?: string) =>
-    ipcRenderer.invoke('get-schema', tableName),
+  runSQL: (sql: string) => ipcRenderer.invoke('sql.runSQL', sql),
+  getUniqueTableName: (params: UniqueTableNameParams) =>
+    ipcRenderer.invoke('file.getUniqueTableName', params),
+  generateSQL: (params: GenerateSQLParams) =>
+    ipcRenderer.invoke('sql.generateSQL', params),
+  getSchema: (tableName?: string) => ipcRenderer.invoke('db.getSchema', tableName),
   deleteTable: (tableName: string) =>
-    ipcRenderer.invoke('delete-table', tableName),
-  resetDB: () => ipcRenderer.invoke('reset-db'),
-  resetApp: () => ipcRenderer.invoke('reset-app'),
+    ipcRenderer.invoke('db.deleteTable', tableName),
+  resetDB: () => ipcRenderer.invoke('db.resetDB'),
+  resetApp: () => ipcRenderer.invoke('app.resetApp'),
 
-  // AI 功能
-  askAI: (
-    query: string,
-    schemas: any[],
-    relations: any[],
-    context?: { lastSql: string; lastQuery: string },
-    language?: 'en' | 'zh',
-    domainRules?: any[],
-    suggestionCount?: number
-  ) =>
-    ipcRenderer.invoke(
-      'ask-ai',
-      query,
-      schemas,
-      relations,
-      context,
-      language,
-      domainRules,
-      suggestionCount
-    ),
-  fixSQL: (
-    originalSql: string,
-    error: string,
-    schemas: any[],
-    domainRules?: any[]
-  ) =>
-    ipcRenderer.invoke('ask-ai-fix', originalSql, error, schemas, domainRules),
-  analyzeContext: (schemas: any[], language?: 'en' | 'zh') =>
-    ipcRenderer.invoke('analyze-context', schemas, language),
-  analyzeSemantics: (tableName: string, columns: any[], language?: string) =>
-    ipcRenderer.invoke('ai:analyze-semantics', tableName, columns, language),
-  generateMetricExpression: (options: {
-    input: string
-    columns: Array<{ name: string; type: string }>
-    mode: 'generate' | 'refine'
-  }) => ipcRenderer.invoke('ai:generate-metric-expression', options),
-  generateInsight: (context: any) =>
-    ipcRenderer.invoke('ai:generate-insight', context),
-  getAIConfig: () => ipcRenderer.invoke('get-ai-config'),
-  setAIConfig: (config: any) => ipcRenderer.invoke('set-ai-config', config),
-  clearAIConfig: () => ipcRenderer.invoke('clear-ai-config'),
-  verifyAIConnection: (config?: any) =>
-    ipcRenderer.invoke('verify-ai-connection', config),
+  askAI: (params: AskAIParams) => ipcRenderer.invoke('ai.askAI', params),
+  fixSQL: (params: FixSQLParams) => ipcRenderer.invoke('ai.fixSQL', params),
+  analyzeContext: (params: AnalyzeContextParams) =>
+    ipcRenderer.invoke('ai.analyzeContext', params),
+  analyzeSemantics: (params: AnalyzeSemanticsParams) =>
+    ipcRenderer.invoke('ai.analyzeSemantics', params),
+  generateMetricExpression: (options: GenerateMetricExpressionParams) =>
+    ipcRenderer.invoke('ai.generateMetricExpression', options),
+  generateInsight: (context: InsightGenerationContext) =>
+    ipcRenderer.invoke('ai.generateInsight', context),
+  aiPreviewExtract: (params: AIPreviewExtractParams) =>
+    ipcRenderer.invoke('ai.aiPreviewExtract', params),
+  aiBatchExtract: (params: AIBatchExtractParams) =>
+    ipcRenderer.invoke('ai.aiBatchExtract', params),
+  dropAIColumn: (params: DropAIColumnParams) =>
+    ipcRenderer.invoke('ai.dropAIColumn', params),
 
-  // 文件同步
-  validateColumnTypes: (params: any) =>
-    ipcRenderer.invoke('validate-column-types', params),
-  reIngestFile: (
-    fileId: string,
-    filePath: string,
-    tableName: string,
-    sheetName?: string,
-    columns?: any[],
-    readOptions?: Record<string, any>
-  ) =>
-    ipcRenderer.invoke(
-      're-ingest-file',
-      fileId,
-      filePath,
-      tableName,
-      sheetName,
-      columns,
-      readOptions
-    ),
-  ingestPreCheck: (params: any) =>
-    ipcRenderer.invoke('ingest:pre-check', params),
-  appendData: (params: any) => ipcRenderer.invoke('ingest:append', params),
-  createTableFromSource: (params: any) =>
-    ipcRenderer.invoke('ingest:create-table', params),
-  cleanupIngestion: (tempTableNames: string[], tempFilePaths?: string[]) =>
-    ipcRenderer.invoke('ingest:cleanup', tempTableNames, tempFilePaths),
+  getTokenConfig: () => ipcRenderer.invoke('audit.getTokenConfig'),
+  setTokenConfig: (config: SetTokenConfigParams) =>
+    ipcRenderer.invoke('audit.setTokenConfig', config),
+  getTokenUsage: () => ipcRenderer.invoke('audit.getTokenUsage'),
 
-  cleanupAllStaging: () => ipcRenderer.invoke('ingest:cleanup-all-staging'),
+  getAIConfig: () => ipcRenderer.invoke('ai.getAIConfig'),
+  setAIConfig: (config: SetAIConfigParams) =>
+    ipcRenderer.invoke('ai.setAIConfig', config),
+  clearAIConfig: () => ipcRenderer.invoke('ai.clearAIConfig'),
+  verifyAIConnection: (config?: VerifyAIConnectionParams) =>
+    ipcRenderer.invoke('ai.verifyAIConnection', config),
 
-  // Database Connectors
-  testDBConnection: (config: any, password?: string) =>
-    ipcRenderer.invoke('db:test-connection', config, password),
-  listDBTables: (config: any) => ipcRenderer.invoke('db:list-tables', config),
-  syncDBTable: (config: any, tableName: string) =>
-    ipcRenderer.invoke('db:sync-table', config, tableName),
+  validateColumnTypes: (params: ValidateColumnTypesParams) =>
+    ipcRenderer.invoke('file.validateColumnTypes', params),
+  reIngestFile: (params: ReIngestFileParams) =>
+    ipcRenderer.invoke('file.reIngestFile', params),
+  ingestPreCheck: (params: IngestPreCheckParams) =>
+    ipcRenderer.invoke('ingest.ingestPreCheck', params),
+  appendData: (params: AppendDataParams) =>
+    ipcRenderer.invoke('ingest.appendData', params),
+  createTableFromSource: (params: CreateTableFromSourceParams) =>
+    ipcRenderer.invoke('ingest.createTableFromSource', params),
+  cleanupIngestion: (params: CleanupIngestionParams) =>
+    ipcRenderer.invoke('ingest.cleanupIngestion', params),
+  cleanupAllStaging: () => ipcRenderer.invoke('ingest.cleanupAllStaging'),
+  ingestJson: (params: IngestJsonParams) =>
+    ipcRenderer.invoke('ingest.ingestJson', params),
 
-  // 导出功能
-  exportPDF: (data: any) => ipcRenderer.invoke('export-pdf', data),
-  saveImage: (dataUrl: string, name?: string) =>
-    ipcRenderer.invoke('save-image', dataUrl, name),
-  saveFile: (content: string, extension: string, name: string) =>
-    ipcRenderer.invoke('save-file', content, extension, name),
-  exportReport: (payload: any) => ipcRenderer.invoke('export-report', payload),
-  exportWebReport: (widgets: any[], config: any, fullSnapshot?: any) =>
-    ipcRenderer.invoke('export-web-report', widgets, config, fullSnapshot),
-  exportExcel: (payload: any) => ipcRenderer.invoke('export-excel', payload),
+  testDBConnection: (params: TestDBConnectionParams) =>
+    ipcRenderer.invoke('db.testDBConnection', params),
+  listDBTables: (config: ListDBTablesParams) =>
+    ipcRenderer.invoke('db.listDBTables', config),
+  syncDBTable: (params: SyncDBTableParams) =>
+    ipcRenderer.invoke('db.syncDBTable', params),
 
-  // System
-  getDeviceId: () => ipcRenderer.invoke('get-device-id'),
-  getUserInfo: () => ipcRenderer.invoke('get-user-info'),
-  getPath: (name: string) => ipcRenderer.invoke('get-path', name),
-  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  getMainLogs: () => ipcRenderer.invoke('get-main-logs'),
-  secureSet: (key: string, value: string) =>
-    ipcRenderer.invoke('secure-set', key, value),
-  secureGet: (key: string) => ipcRenderer.invoke('secure-get', key),
-  validateLicense: (key: string) => ipcRenderer.invoke('validate-license', key),
+  exportPDF: (data: ExportPDFParams) => ipcRenderer.invoke('export.exportPDF', data),
+  saveImage: (params: SaveImageParams) => ipcRenderer.invoke('save.saveImage', params),
+  saveFile: (params: SaveFileParams) => ipcRenderer.invoke('save.saveFile', params),
+  exportReport: (payload: ExportReportParams) =>
+    ipcRenderer.invoke('export.exportReport', payload),
+  exportWebReport: (params: ExportWebReportParams) =>
+    ipcRenderer.invoke('export.exportWebReport', params),
+  exportExcel: (payload: ExportExcelParams) =>
+    ipcRenderer.invoke('export.exportExcel', payload),
+
+  getDeviceId: () => ipcRenderer.invoke('sys.getDeviceId'),
+  getUserInfo: () => ipcRenderer.invoke('sys.getUserInfo'),
+  getPath: (name: string) => ipcRenderer.invoke('sys.getPath', name),
+  getAppVersion: () => ipcRenderer.invoke('sys.getAppVersion'),
+  getMainLogs: () => ipcRenderer.invoke('sys.getMainLogs'),
+  secureSet: (params: SecureSetParams) => ipcRenderer.invoke('sys.secureSet', params),
+  secureGet: (key: string) => ipcRenderer.invoke('sys.secureGet', key),
+  validateLicense: (key: string) => ipcRenderer.invoke('sys.validateLicense', key),
   platform: process.platform,
   version: process.versions,
-  windowControl: (
-    action: 'enter-fullscreen' | 'exit-fullscreen' | 'toggle-maximize'
-  ) => ipcRenderer.send('window-control', action),
+  windowControl: action => ipcRenderer.send('window-control', action),
 
-  // Open external URLs in user's default browser
-  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  openExternal: (url: string) => ipcRenderer.invoke('sys.openExternal', url),
   showItemInFolder: (path: string) =>
-    ipcRenderer.invoke('show-item-in-folder', path),
+    ipcRenderer.invoke('sys.showItemInFolder', path),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
-  setLanguage: (lang: 'en' | 'zh') =>
-    ipcRenderer.invoke('app:set-language', lang),
+  setLanguage: (lang: 'en' | 'zh') => ipcRenderer.invoke('app.setLanguage', lang),
 
-  // 事件监听
-  onWindowStateChanged: (
-    callback: (state: { isFullScreen: boolean }) => void
-  ) => {
-    const listener = (_event: any, state: { isFullScreen: boolean }) =>
-      callback(state)
+  projectCreate: (params: ProjectCreateParams) =>
+    ipcRenderer.invoke('project.projectCreate', params),
+  projectOpen: (projectPath?: string) =>
+    ipcRenderer.invoke('project.projectOpen', projectPath),
+  projectSave: (params: ProjectSaveParams) =>
+    ipcRenderer.invoke('project.projectSave', params),
+  projectClose: () => ipcRenderer.invoke('project.projectClose'),
+  projectGetDefaultPath: () => ipcRenderer.invoke('project.projectGetDefaultPath'),
+
+  onWindowStateChanged: (callback: WindowStateCallback) => {
+    const listener = (_event: IpcRendererEvent, state: WindowState) => callback(state)
     ipcRenderer.on('window-state-changed', listener)
     return () => ipcRenderer.removeListener('window-state-changed', listener)
   },
-  onFileProgress: (
-    callback: (data: { fileId: string; progress: number }) => void
-  ) => {
-    const listener = (
-      _event: any,
-      data: { fileId: string; progress: number }
-    ) => callback(data)
+  onFileProgress: (callback: FileProgressCallback) => {
+    const listener = (_event: IpcRendererEvent, data: FileProgressData) => callback(data)
     ipcRenderer.on('file:progress', listener)
     return () => ipcRenderer.removeListener('file:progress', listener)
   },
-  onParseProgress: (
-    callback: (data: { filePath: string; count: number }) => void
-  ) => {
-    const listener = (_event: any, data: { filePath: string; count: number }) =>
-      callback(data)
+  onParseProgress: (callback: ParseProgressCallback) => {
+    const listener = (_event: IpcRendererEvent, data: ParseProgressData) => callback(data)
     ipcRenderer.on('file:parse-progress', listener)
     return () => ipcRenderer.removeListener('file:parse-progress', listener)
   },
@@ -176,12 +190,24 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('command:close-project', listener)
     return () => ipcRenderer.removeListener('command:close-project', listener)
   },
-  onRemoteConfig: (callback: (config: any) => void) => {
-    const listener = (_event: any, config: any) => callback(config)
+  onRemoteConfig: (callback: RemoteConfigCallback) => {
+    const listener = (_event: IpcRendererEvent, config: RemoteConfigData) =>
+      callback(config)
     ipcRenderer.on('app:remote-config', listener)
     return () => ipcRenderer.removeListener('app:remote-config', listener)
   },
+  onBatchProgress: (callback: BatchProgressCallback) => {
+    const listener = (_event: IpcRendererEvent, data: BatchProgressData) =>
+      callback(data)
+    ipcRenderer.on('ai:batch-progress', listener)
+    return () => ipcRenderer.removeListener('ai:batch-progress', listener)
+  },
+  onBatchComplete: (callback: BatchCompleteCallback) => {
+    const listener = (_event: IpcRendererEvent, data: BatchCompleteData) =>
+      callback(data)
+    ipcRenderer.on('ai:batch-complete', listener)
+    return () => ipcRenderer.removeListener('ai:batch-complete', listener)
+  },
 }
 
-// 将 API 暴露给渲染进程
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

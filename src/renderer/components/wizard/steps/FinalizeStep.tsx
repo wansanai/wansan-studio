@@ -67,11 +67,24 @@ export function FinalizeStep() {
 
   const preCheck = currentTask?.preCheckResult
 
+  // Compute a stable key for configuration to avoid redundant checks
+  const configKey = useMemo(() => {
+    if (!currentTask) return ''
+    return JSON.stringify({
+      path: currentTask.filePath,
+      temp: currentTask.tempFilePath,
+      keys: pkNames,
+      mapping: currentTask.columnMapping,
+      source: currentTask.sourceName
+    })
+  }, [currentTask, pkNames])
+
   // Trigger Pre-check (for Append/Merge Mode)
   useEffect(() => {
     if (!currentTask || !targetFile || (mode !== 'append' && mode !== 'merge'))
       return
     if (pkNames.length === 0) return
+    if (isPreChecking) return
 
     const runPreCheck = async () => {
       setIsPreChecking(true)
@@ -99,24 +112,15 @@ export function FinalizeStep() {
     }
 
     runPreCheck()
-  }, [
-    currentTaskIndex,
-    pkNames, // JSON.stringify(pkNames) extracted implicitly if I rely on array ref (useMemo above handles it)
-             // But wait, useMemo returns new array? No, useMemo dependency [mode, targetFile, ...]
-             // If I use JSON.stringify in dep array it triggers warning.
-             // I should rely on pkNames reference from useMemo.
-    targetFile,
-    mode,
-    currentTask,
-    updateTask
-  ])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configKey, targetFile?.tableName, mode, currentTaskIndex])
 
   // --- REPLACE MODE DIFF LOGIC ---
   const schemaDiff = useMemo(() => {
     if (mode !== 'replace' || !targetFile || !currentTask) return null
 
-    const originalColumns = targetFile.columns
-    const newColumns = currentTask.columns
+    const originalColumns = targetFile.columns.filter(c => c.name !== '_ws_row_id')
+    const newColumns = currentTask.columns.filter(c => c.name !== '_ws_row_id')
 
     const missing = originalColumns.filter(
       old => !newColumns.some(n => n.name === old.name)
@@ -465,11 +469,13 @@ export function FinalizeStep() {
                     {t('wizard.original_schema')}
                   </h4>
                   <div className="bg-white border border-zinc-200 rounded-2xl p-4 shadow-sm space-y-2 opacity-60 pointer-events-none grayscale">
-                    {targetFile?.columns.map(col => (
-                      <div
-                        key={col.name}
-                        className="flex items-center justify-between text-sm py-1 border-b border-zinc-50 last:border-0"
-                      >
+                    {targetFile?.columns
+                      .filter(col => col.name !== '_ws_row_id')
+                      .map(col => (
+                        <div
+                          key={col.name}
+                          className="flex items-center justify-between text-sm py-1 border-b border-zinc-50 last:border-0"
+                        >
                         <span className="font-mono text-zinc-600">
                           {col.name}
                         </span>

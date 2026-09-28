@@ -249,11 +249,11 @@ export const ChatReportCard = React.memo(function ChatReportCard({
   const handleExportCSV = async () => {
     if (!reportData?.tableData) return
     const csv = dataToCSV(reportData.tableData)
-    const res = await window.electronAPI.saveFile(
-      csv,
-      'csv',
-      `${reportData.title || 'export'}.csv`
-    )
+    const res = await window.electronAPI.saveFile({
+      content: csv,
+      extension: 'csv',
+      name: `${reportData.title || 'export'}.csv`
+    })
     if (res.success && res.data) {
       const filePath = res.data as string
       addToast({
@@ -350,10 +350,10 @@ export const ChatReportCard = React.memo(function ChatReportCard({
         backgroundColor: '#ffffff',
         filter: (node) => !node.classList?.contains('hide-on-export')
       })
-      const res = await window.electronAPI.saveImage(
+      const res = await window.electronAPI.saveImage({
         dataUrl,
-        `${reportData.title || 'chart'}.png`
-      )
+        name: `${reportData.title || 'chart'}.png`
+      })
       if (res.success && res.data) {
         const filePath = res.data as string
         addToast({

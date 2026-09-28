@@ -1,4 +1,5 @@
-import { Monaco } from '@monaco-editor/react'
+import type { Monaco } from '@monaco-editor/react'
+import type { languages } from 'monaco-editor'
 import { FileNode } from '@shared/types'
 import { getJoinedColumnName } from '@shared/naming-utils'
 
@@ -53,7 +54,7 @@ export function registerSqlCompletion(monaco: Monaco, files: FileNode[]) {
         endColumn: word.endColumn,
       }
 
-      const suggestions: any[] = []
+      const suggestions: languages.CompletionItem[] = []
 
       // 1. Keywords & Snippets
       SQL_KEYWORDS.forEach(kw => {
@@ -111,6 +112,7 @@ export function registerSqlCompletion(monaco: Monaco, files: FileNode[]) {
 
         // 4. Columns for this table
         file.columns.forEach(col => {
+          if (col.name === '_ws_row_id') return
           suggestions.push({
             label: col.name,
             detail: `Column (${col.type}) in ${file.tableName}`,
@@ -181,6 +183,7 @@ export function registerSqlCompletion(monaco: Monaco, files: FileNode[]) {
 
           // View Columns: Native
           file.columns.forEach(col => {
+            if (col.name === '_ws_row_id') return
             suggestions.push({
               label: col.name,
               detail: `Column in ${viewName}`,
@@ -207,6 +210,7 @@ export function registerSqlCompletion(monaco: Monaco, files: FileNode[]) {
               const targetFile = files.find(f => f.id === rel.targetFileId)
               if (targetFile) {
                 targetFile.columns.forEach(targetCol => {
+                  if (targetCol.name === '_ws_row_id') return
                   const joinedName = getJoinedColumnName(rel.sourceColumn, targetCol.name)
                   suggestions.push({
                     label: joinedName,

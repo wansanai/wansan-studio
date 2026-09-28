@@ -184,7 +184,7 @@ export function TreeNode({ node, style, dragHandle }: TreeNodeProps) {
         className={`truncate flex-1 ${isMissing ? 'line-through text-red-400 opacity-80' : ''}`}
         title={isMissing ? t('file_missing_tooltip') : undefined}
       >
-        {data.name}
+        {data.alias ? `${data.alias} (${data.name})` : data.name}
         {isProcessing && progress !== undefined && (
           <span className="text-xs text-indigo-500 ml-2 font-mono">
             {progress > 100

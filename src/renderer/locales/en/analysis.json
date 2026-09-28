@@ -60,5 +60,11 @@
     "linked_to": "Linked to:",
     "no_links": "No Links"
   },
-  "smart_metrics": "Smart Metrics"
+  "smart_metrics": "Smart Metrics",
+  "analyzing_semantics_title": "Analyzing Semantics...",
+  "analyzing_semantics_desc": "AI is deeply understanding your data structure.",
+  "review_semantics_title": "Review Semantic Suggestions",
+  "review_semantics_desc": "Please review and confirm the business metadata and metric suggestions.",
+  "has_extraction_hint": "Has Extraction Hint",
+  "no_metric_suggestions": "No single-table metric suggestions found."
 }

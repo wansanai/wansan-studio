@@ -11,7 +11,7 @@ export type DrillDownActionType = 'focus' | 'view_data' | 'breakdown'
 interface VizChartProps {
   type?: ChartType
   title?: string
-  data?: Array<Record<string, any>>
+  data?: Array<Record<string, unknown>>
   config?: ReportData['vizConfig']
   className?: string
   style?: React.CSSProperties
@@ -19,7 +19,7 @@ interface VizChartProps {
   /** Column schema for breakdown dimension suggestions */
   columnFields?: Array<{ name: string; type: string }>
   /** Callback to trigger AI insight generation */
-  onRequestInsight?: (chartData: any[]) => void
+  onRequestInsight?: (chartData: Array<Record<string, unknown>>) => void
   /** Items to highlight (for visual anchoring) */
   highlightedItems?: string[]
   /** Callback for drill-down actions */
@@ -68,19 +68,29 @@ export function VizChart({
       .slice(0, 8) // Limit to prevent menu overflow
   }, [columnFields, config?.x_axis])
 
-  const handleChartClick = useCallback((params: any) => {
-    if (params && params.event && params.event.event) {
-      const { clientX, clientY } = params.event.event
-      const name = params.componentType === 'xAxis' ? params.value : params.name
+  type ChartClickEvent = {
+    event?: { event?: { clientX: number; clientY: number } }
+    componentType?: string
+    value?: unknown
+    name?: string
+    seriesName?: string
+  }
 
-      if (!name) return
+  const handleChartClick = useCallback((params: unknown) => {
+    const event = params as ChartClickEvent
+    if (event.event?.event) {
+      const { clientX, clientY } = event.event.event
+      const rawName = event.componentType === 'xAxis' ? event.value : event.name
+
+      if (rawName === undefined || rawName === null || rawName === '') return
+      const name = String(rawName)
 
       setMenuState({
         visible: true,
         x: clientX,
         y: clientY,
         name,
-        seriesName: params.seriesName,
+        seriesName: event.seriesName,
       })
     }
   }, [])
@@ -138,7 +148,7 @@ export function VizChart({
       style={{ height: '100%', width: '100%', ...style }}
     >
       <Chart
-        option={option as any}
+        option={option}
         className="relative h-full w-full"
         style={{ height: '100%', width: '100%', ...style }}
         onChartClick={handleChartClick}

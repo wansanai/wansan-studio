@@ -95,9 +95,10 @@ export function SelectContent({ children, className }: SelectContentProps) {
 interface SelectItemProps {
   value: string
   children: React.ReactNode
+  className?: string
 }
 
-export function SelectItem({ value, children }: SelectItemProps) {
+export function SelectItem({ value, children, className }: SelectItemProps) {
   const ctx = React.useContext(SelectContext)
 
   if (!ctx) return null
@@ -108,7 +109,7 @@ export function SelectItem({ value, children }: SelectItemProps) {
         ctx.onValueChange(value)
         ctx.setOpen(false)
       }}
-      className="text-sm"
+      className={cn("text-sm", className)}
     >
       {children}
     </DropdownMenuItem>

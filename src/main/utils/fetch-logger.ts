@@ -1,14 +1,25 @@
 import { isDev } from './env'
 
+function getFetchUrl(resource: RequestInfo | URL) {
+  if (typeof resource === 'string') return resource
+  if (resource instanceof URL) return resource.toString()
+  return resource.url
+}
+
 export function setupFetchLogger() {
   if (!isDev()) return
 
-  const originalFetch = global.fetch
+  const originalFetch = global.fetch.bind(global)
 
-  global.fetch = async (...args: any[]) => {
+  global.fetch = async (
+    ...args: Parameters<typeof fetch>
+  ): Promise<Response> => {
     const [resource, config] = args
-    const url = typeof resource === 'string' ? resource : resource.url
-    const method = (config?.method || 'GET').toUpperCase()
+    const url = getFetchUrl(resource)
+    const method = (
+      config?.method ||
+      (typeof resource === 'object' && 'method' in resource ? resource.method : 'GET')
+    ).toUpperCase()
 
     console.log(`
 🌐 [Main Fetch] ${method} ${url}`)
@@ -19,12 +30,11 @@ export function setupFetchLogger() {
     const startTime = Date.now()
 
     try {
-      const response = await originalFetch.apply(global, args)
+      const response = await originalFetch(...args)
       const duration = Date.now() - startTime
 
       console.log(`   ✅ Status: ${response.status} (${duration}ms)`)
 
-      // Optionally log body if small
       const clone = response.clone()
       try {
         const text = await clone.text()
@@ -40,7 +50,7 @@ export function setupFetchLogger() {
           }
         }
       } catch {
-        /* ignore body errors */
+        // ignore body errors
       }
 
       return response

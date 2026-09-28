@@ -5,11 +5,46 @@ import { normalizeDuckDBType } from '@shared/type-utils'
 import fs from 'fs-extra'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
+import type { TransformCallback } from 'stream'
 import { TempFileManager } from '../utils/temp-manager'
 
 export interface DBTableInfo {
   name: string
   schema?: string
+}
+
+type RowRecord = Record<string, unknown>
+
+interface PreviewColumn {
+  name: string
+  type: string
+  nullable: boolean
+  isPrimaryKey?: boolean
+  description?: string
+}
+
+interface PreviewTableResult {
+  columns: PreviewColumn[]
+  preview: RowRecord[]
+  rowCount: number
+}
+
+interface MysqlShowColumnRow {
+  Field: string
+  Type: string
+  Null: string
+  Key: string
+  Comment?: string
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function getErrorCode(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
 }
 
 /**
@@ -47,7 +82,7 @@ class CSVFormatter extends Transform {
     super({ objectMode: true })
   }
 
-  _transform(row: any, _encoding: any, callback: any) {
+  _transform(row: RowRecord, _encoding: string, callback: TransformCallback) {
     let result = ''
     if (this.isFirstChunk) {
       // 写入 CSV 表头
@@ -113,8 +148,11 @@ export class DBConnectorService {
         await client.connect()
         await client.end()
         return true
-      } catch (e) {
+      } catch (e: unknown) {
         console.error('[Connector] PG Connection failed:', e)
+        if (getErrorMessage(e).includes('received invalid response: 4a')) {
+          console.error('[Connector] Hint: You might be connecting to a non-Postgres service, or there is an SSL mismatch (try enabling/disabling SSL).')
+        }
         throw e
       }
     } else {
@@ -134,8 +172,11 @@ export class DBConnectorService {
         await connection.query("SET NAMES 'utf8mb4'")
         await connection.end()
         return true
-      } catch (e) {
+      } catch (e: unknown) {
         console.error('[Connector] MySQL Connection failed:', e)
+        if (getErrorCode(e) === 'ER_ACCESS_DENIED_ERROR') {
+           console.error('[Connector] Hint: Check your username and password.')
+        }
         throw e
       }
     }
@@ -148,51 +189,56 @@ export class DBConnectorService {
     const password = secureGet(`db_pass_${config.id}`) || ''
     const extra = parseExtraParams(config.params)
     
-    if (config.type === 'postgres') {
-      const { Client } = await import('pg')
-      const client = new Client({ 
-        host: config.host, 
-        port: config.port, 
-        user: config.user, 
-        password, 
-        database: config.database,
-        ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
-        ...extra
-      })
-      await client.connect()
-      const res = await client.query(`
-        SELECT table_name as name, table_schema as schema 
-        FROM information_schema.tables 
-        WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-        ORDER BY table_name
-      `)
-      await client.end()
-      return res.rows
-    } else {
-      const mysql = await import('mysql2/promise')
-      const connection = await mysql.createConnection({
-        host: config.host,
-        port: config.port,
-        user: config.user,
-        password: password,
-        database: config.database,
-        charset: 'UTF8MB4',
-        ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
-        ...extra
-      })
-      await connection.query("SET NAMES 'utf8mb4'")
-      const [rows] = await connection.execute('SHOW TABLES')
-      await connection.end()
-      return (rows as any[]).map(row => ({
-        name: Object.values(row)[0] as string
-      }))
+    try {
+      if (config.type === 'postgres') {
+        const { Client } = await import('pg')
+        const client = new Client({ 
+          host: config.host, 
+          port: config.port, 
+          user: config.user, 
+          password, 
+          database: config.database,
+          ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
+          ...extra
+        })
+        await client.connect()
+        const res = await client.query(`
+          SELECT table_name as name, table_schema as schema 
+          FROM information_schema.tables 
+          WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+          ORDER BY table_name
+        `)
+        await client.end()
+        return res.rows
+      } else {
+        const mysql = await import('mysql2/promise')
+        const connection = await mysql.createConnection({
+          host: config.host,
+          port: config.port,
+          user: config.user,
+          password: password,
+          database: config.database,
+          charset: 'UTF8MB4',
+          ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
+          ...extra
+        })
+        await connection.query("SET NAMES 'utf8mb4'")
+        const [rows] = await connection.execute('SHOW TABLES')
+        await connection.end()
+        return (rows as RowRecord[]).map(row => ({
+          name: String(Object.values(row)[0] ?? '')
+        }))
+      }
+    } catch (e: unknown) {
+      console.error(`[Connector] listTables failed for ${config.name} (${config.type}):`, e)
+      throw e
     }
   }
 
   /**
    * 获取表结构和预览数据
    */
-    async previewTable(config: DBConnectionConfig, tableName: string) {
+    async previewTable(config: DBConnectionConfig, tableName: string): Promise<PreviewTableResult> {
       const password = secureGet(`db_pass_${config.id}`) || ''
       const escapedName = escapeTableName(tableName, config.type)
       const extra = parseExtraParams(config.params)
@@ -269,15 +315,15 @@ export class DBConnectorService {
         const [count] = await conn.execute(`SELECT COUNT(*) as count FROM ${escapedName}`)
         await conn.end()
         return {
-          columns: (cols as any[]).map(r => ({
+          columns: (cols as MysqlShowColumnRow[]).map(r => ({
             name: r.Field,
             type: normalizeDuckDBType(r.Type),
             nullable: r.Null === 'YES',
             isPrimaryKey: r.Key === 'PRI',
             description: r.Comment || undefined
           })),
-          preview: data as any[],
-          rowCount: (count as any[])[0].count
+          preview: data as RowRecord[],
+          rowCount: Number((count as Array<{ count: number | string | bigint }>)[0].count)
         }
       }
     }

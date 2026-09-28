@@ -65,10 +65,10 @@ export const DashboardReportCard = forwardRef<
           },
         })
 
-        const result = await window.electronAPI.saveImage(
+        const result = await window.electronAPI.saveImage({
           dataUrl,
-          `${report.reportData.title || 'report'}.png`
-        )
+          name: `${report.reportData.title || 'report'}.png`
+        })
 
         if (result.success) {
           addToast({

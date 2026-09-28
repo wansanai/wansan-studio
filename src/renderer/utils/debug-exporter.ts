@@ -57,11 +57,11 @@ export async function exportDebugLog() {
   const content = JSON.stringify(report, null, 2)
 
   if (window.electronAPI?.saveFile) {
-    const result = await window.electronAPI.saveFile(
+    const result = await window.electronAPI.saveFile({
       content,
-      'json',
-      `wansan-debug-${Date.now()}.json`
-    )
+      extension: 'json',
+      name: `wansan-debug-${Date.now()}.json`
+    })
     if (result.success && result.data) {
       return result.data as string
     }

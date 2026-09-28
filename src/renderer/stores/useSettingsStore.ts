@@ -13,6 +13,7 @@ import type {
   AppConfig,
 } from '@shared/types'
 import { Analytics } from '../services/analytics'
+import { ExtractTemplate } from '../lib/ai-presets'
 
 export type SettingsLanguage = 'en' | 'zh'
 
@@ -29,6 +30,7 @@ export interface SettingsState {
   dismissedAnnouncementId: string | null
   ignoredUpdateVersion: string | null // [NEW]
   domainRules: DomainRule[]
+  extractTemplates: ExtractTemplate[] // [NEW]
   recentProjectPaths: string[]
   dbConnections: import('@shared/types').DBConnectionConfig[]
   isSpecialChannel: boolean
@@ -46,6 +48,10 @@ export interface SettingsState {
   removeDomainRule: (id: string) => void
   updateDomainRule: (id: string, content: string) => void
   reorderDomainRules: (oldIndex: number, newIndex: number) => void
+  addExtractTemplate: (template: Omit<ExtractTemplate, 'id' | 'createdAt' | 'lastUsedAt'>) => void // [NEW]
+  removeExtractTemplate: (id: string) => void // [NEW]
+  useExtractTemplate: (id: string) => void // [NEW]
+  importExtractTemplates: (templates: Omit<ExtractTemplate, 'id' | 'createdAt' | 'lastUsedAt'>[]) => void // [NEW]
   addRecentProject: (path: string) => void
   removeRecentProject: (path: string) => void
   addDBConnection: (
@@ -139,6 +145,7 @@ const initialSettingsState: Omit<
   dismissedAnnouncementId: null,
   ignoredUpdateVersion: null,
   domainRules: [],
+  extractTemplates: [], // [NEW]
   recentProjectPaths: [],
   dbConnections: [],
   isSpecialChannel: false,
@@ -146,6 +153,10 @@ const initialSettingsState: Omit<
   showChartLabels: false,
   suggestionCount: 3,
   ignoreUpdate: () => {},
+  addExtractTemplate: () => {},
+  removeExtractTemplate: () => {},
+  useExtractTemplate: () => {},
+  importExtractTemplates: () => {},
 }
 
 export const SETTINGS_STORAGE_KEY = 'wansan-settings-v1'
@@ -155,11 +166,53 @@ export const useSettingsStore = create<SettingsState>()(
     (set, get) => ({
       ...initialSettingsState,
       // ... (loadSensitiveData and other actions)
+      addExtractTemplate: template =>
+        set(state => ({
+          extractTemplates: [
+            ...state.extractTemplates,
+            { 
+              ...template, 
+              id: crypto.randomUUID(),
+              createdAt: Date.now(),
+              lastUsedAt: Date.now()
+            },
+          ],
+        })),
+      removeExtractTemplate: id =>
+        set(state => ({
+          extractTemplates: state.extractTemplates.filter(t => t.id !== id),
+        })),
+      useExtractTemplate: id =>
+        set(state => ({
+          extractTemplates: state.extractTemplates.map(t => 
+            t.id === id ? { ...t, lastUsedAt: Date.now() } : t
+          ),
+        })),
+      importExtractTemplates: templates =>
+        set(state => {
+          const now = Date.now()
+          // Avoid duplicates by label
+          const existingLabels = new Set(
+            state.extractTemplates.map(t => t.label)
+          )
+          const newTemplates = templates
+            .filter(t => !existingLabels.has(t.label))
+            .map((t, index) => ({ 
+              ...t, 
+              id: crypto.randomUUID(),
+              createdAt: now + index, // Slight offset to maintain import order
+              lastUsedAt: now + index
+            }))
+
+          return {
+            extractTemplates: [...state.extractTemplates, ...newTemplates],
+          }
+        }),
       addDBConnection: async (conn, password) => {
         const id = crypto.randomUUID()
         const newConn = { ...conn, id }
         if (password) {
-          await window.electronAPI.secureSet(`db_pass_${id}`, password)
+          await window.electronAPI.secureSet({ key: `db_pass_${id}`, value: password })
         }
         set(state => ({
           dbConnections: [...state.dbConnections, newConn],
@@ -167,14 +220,14 @@ export const useSettingsStore = create<SettingsState>()(
         return id
       },
       removeDBConnection: async id => {
-        await window.electronAPI.secureSet(`db_pass_${id}`, '') // Clear password
+        await window.electronAPI.secureSet({ key: `db_pass_${id}`, value: '' }) // Clear password
         set(state => ({
           dbConnections: state.dbConnections.filter(c => c.id !== id),
         }))
       },
       updateDBConnection: async (id, updates, password) => {
         if (password) {
-          await window.electronAPI.secureSet(`db_pass_${id}`, password)
+          await window.electronAPI.secureSet({ key: `db_pass_${id}`, value: password })
         }
         set(state => ({
           dbConnections: state.dbConnections.map(c =>

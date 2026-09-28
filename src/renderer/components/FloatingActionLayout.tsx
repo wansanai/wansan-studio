@@ -3,16 +3,16 @@ import { Button } from './ui/button'
 import { useTranslation } from 'react-i18next'
 import { useProjectStore } from '../stores/useProjectStore'
 
-interface DataWorkspaceLayoutProps {
+interface FloatingActionLayoutProps {
   children: ReactNode
   showAction?: boolean
 }
 
-export function DataWorkspaceLayout({
+export function FloatingActionLayout({
   children,
   showAction = true,
-}: DataWorkspaceLayoutProps) {
-  const setView = useProjectStore(state => state.setView)
+}: FloatingActionLayoutProps) {
+  const setAppMode = useProjectStore(state => state.setAppMode)
   const { t } = useTranslation('common')
 
   const handleStartAnalysis = () => {
@@ -20,7 +20,7 @@ export function DataWorkspaceLayout({
     if (!activeSessionId) {
       createSession()
     }
-    setView('chat')
+    setAppMode('analysis')
   }
 
   return (

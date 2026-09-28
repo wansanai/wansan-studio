@@ -184,6 +184,16 @@ export function DatabaseSelectorDialog() {
     async (id: string) => {
       const conn = dbConnections.find(c => c.id === id)
       if (!conn) return
+
+      // [V1.7] Check for password presence (Safety check after app reset)
+      const pwdRes = await window.electronAPI.secureGet(`db_pass_${id}`)
+      if (!pwdRes.data) {
+        setEditingConnId(id)
+        setIsCreating(true)
+        setError(t('connector.error_password_missing'))
+        return
+      }
+
       setIsLoadingTables(true)
       setError(null)
       try {
@@ -196,7 +206,7 @@ export function DatabaseSelectorDialog() {
         setIsLoadingTables(false)
       }
     },
-    [dbConnections]
+    [dbConnections, t]
   )
 
   useEffect(() => {
@@ -302,10 +312,10 @@ export function DatabaseSelectorDialog() {
     setError(null)
     const configToTest = { ...newConn, id: editingConnId || 'temp' } as DBConnectionConfig
     try {
-      const res = await window.electronAPI.testDBConnection(
-        configToTest,
-        password || undefined
-      )
+      const res = await window.electronAPI.testDBConnection({
+        config: configToTest,
+        password: password || undefined
+      })
       if (res.success) setTestSuccess(true)
       else setError(res.error || 'Connection failed')
     } catch (e: any) {
@@ -425,10 +435,19 @@ export function DatabaseSelectorDialog() {
               {dbConnections.map(conn => (
                 <div
                   key={conn.id}
-                  onClick={() => {
-                    setSelectedConnId(conn.id)
-                    setIsCreating(false)
-                    setEditingConnId(null)
+                  onClick={async () => {
+                    // Check password before selecting
+                    const pwdRes = await window.electronAPI.secureGet(`db_pass_${conn.id}`)
+                    if (!pwdRes.data) {
+                      setEditingConnId(conn.id)
+                      setIsCreating(true)
+                      setSelectedConnId(conn.id)
+                      setError(t('connector.error_password_missing'))
+                    } else {
+                      setSelectedConnId(conn.id)
+                      setIsCreating(false)
+                      setEditingConnId(null)
+                    }
                   }}
                   className={cn(
                     'group flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all border',

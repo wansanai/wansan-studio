@@ -20,7 +20,7 @@
 *   **Framework**: React 18 + Vite.
 *   **State**: Zustand (Global Store) + TanStack Query (Async Ops).
 *   **UI System**: Tailwind CSS v4 + Shadcn UI.
-*   **Design Language**: **"Wansan Airy"** (Zero-border, Large Radius, Soft Shadows).
+*   **Design Language**: **"Wansan Airy"** (Zero-border, Moderate Radius like `rounded-3xl`, Soft Shadows).
 *   **Visualization**: Apache ECharts (Canvas).
 *   **Editors**:
     *   **SQL**: `monaco-editor` (VS Code engine).
@@ -73,6 +73,7 @@ graph TD
 2.  **Atomic Modification**: For files exceeding 100 lines, prioritize using multiple small `replace` calls instead of a single `write_file` to minimize the risk of accidental code deletion.
 3.  **Destructive Guardrails**: Any operation that performs physical deletion (`fs.remove`, `DROP TABLE`, etc.) MUST include path validation (e.g., ensuring paths are within `os.tmpdir()`) to prevent user data loss.
 4.  **Immediate Verification**: Execute `npm run type-check` immediately after modifying `.tsx` or `.ts` files to catch syntax or logic regressions early.
+5.  **Strict Typing**: NEVER use `any` unless absolutely necessary (e.g., legacy boundaries or unknown third-party payloads). Prefer `unknown`, unions, or proper interface definitions to maintain full type safety.
 
 ### 5.3 Development Guidelines
 *   **I18n**: Use `i18next` with namespaces (`common`, `analysis`, `settings`).
@@ -95,3 +96,20 @@ You MUST follow this strict **Dual-Mode Protocol**. Do not write code unless ask
     *   **Track 2: Direct (Simple)** -> Output a specific code block instruction for the Code Agent.
 
 **Crucial Rule**: When executing a Spec, do NOT paste the whole spec content. Instead, say: *"Context: Read `docs/SPEC_NAME.md` and implement..."*
+
+## 7. Key Documentation Index
+
+Refer to these documents for detailed specifications and architectural deep dives:
+
+1. `docs/00_ARCHITECTURE.md` (Architecture Overview)
+2. `docs/01_DATA_ENGINE.md` (Data Engine & Sync)
+3. `docs/02_AI_KERNEL.md` (AI Core & Self-Healing)
+4. `docs/03_WORKBENCH_UI.md` (UI/UX Guidelines)
+5. `docs/04_ENGINEERING.md` (Engineering & Build)
+6. `docs/SPEC_V1_1_MASTER.md` (v1.1 Specs)
+7. `docs/SPEC_V1_2_MASTER.md` (v1.2 Specs)
+8. `docs/SPEC_V1_3_MASTER.md` (v1.3 Specs)
+9. `docs/SPEC_V1_5_MASTER.md` (v1.4 & v1.5 Specs)
+10. `docs/SPEC_V1_6_MASTER.md` (v1.6 Specs)
+11. `docs/SPEC_V1_7_MASTER.md` (v1.7 Specs)
+12. `docs/ROADMAP_MASTER_V1_6.md` (Future Roadmap)

@@ -7,23 +7,26 @@ import { NativeDatabaseService } from '../services/native-db-service'
  */
 function validateSQL(sql: string): boolean {
   // A simple check for read-only commands.
-  const upperSql = sql.trim().toUpperCase()
+  const trimmedSql = sql.trim()
+  const upperSql = trimmedSql.toUpperCase()
 
-  // [Smart Metrics] Allow View Creation and Deletion
+  // [Smart Metrics & Introspection] Allow View Creation, DESCRIBE, and PRAGMA
+  // Use regex to be robust against multiple spaces/newlines
   if (
-    upperSql.startsWith('CREATE OR REPLACE VIEW') ||
-    upperSql.startsWith('DROP VIEW')
+    /^CREATE\s+(OR\s+REPLACE\s+)?VIEW/i.test(trimmedSql) ||
+    /^DROP\s+VIEW/i.test(trimmedSql) ||
+    /^DESCRIBE/i.test(trimmedSql) ||
+    /^DESC\s+/i.test(trimmedSql) ||
+    /^DESC$/i.test(trimmedSql) ||
+    /^PRAGMA/i.test(trimmedSql)
   ) {
     return true
   }
 
-  // [Introspection] Allow DESCRIBE
-  if (upperSql.startsWith('DESCRIBE') || upperSql.startsWith('DESC')) {
-    return true
-  }
+  const sqlPreview = sql.length > 100 ? `${sql.substring(0, 100)}...` : sql
 
   if (!upperSql.startsWith('SELECT') && !upperSql.startsWith('WITH')) {
-    throw new Error('Only SELECT and WITH statements are allowed.')
+    throw new Error(`Only SELECT and WITH statements are allowed. Received: ${sqlPreview}`)
   }
 
   const forbiddenKeywords = [
@@ -37,16 +40,16 @@ function validateSQL(sql: string): boolean {
   for (const keyword of forbiddenKeywords) {
     if (upperSql.includes(` ${keyword} `)) {
       throw new Error(
-        `Execution of forbidden SQL keyword "${keyword}" is disabled.`
+        `Execution of forbidden SQL keyword "${keyword}" is disabled. SQL: ${sqlPreview}`
       )
     }
   }
   // Explicitly check for CREATE in the middle if it's not a view creation
   if (
     upperSql.includes(' CREATE ') &&
-    !upperSql.startsWith('CREATE OR REPLACE VIEW')
+    !/^CREATE\s+(OR\s+REPLACE\s+)?VIEW/i.test(trimmedSql)
   ) {
-    throw new Error('Execution of forbidden SQL keyword "CREATE" is disabled.')
+    throw new Error(`Execution of forbidden SQL keyword "CREATE" is disabled. SQL: ${sqlPreview}`)
   }
 
   return true
@@ -63,7 +66,7 @@ export async function executeSQL(
   sql: string,
   databaseService: NativeDatabaseService
 ): Promise<{
-  data: any[]
+  data: Record<string, unknown>[]
   columnFields: Array<{ name: string; type: string }>
 }> {
   validateSQL(sql)

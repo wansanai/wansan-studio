@@ -9,7 +9,6 @@ import {
 } from './page-layer'
 import { GridLayer } from './grid-layer'
 import { ReportFlowLayer } from './report-flow-layer' // Added
-import { ChartFullView } from '@/components/viz/containers/ChartFullView'
 import { LayoutScenario, useWorkbenchStore } from '@/stores/useWorkbenchStore'
 import { useUIStore } from '@/stores/useUIStore'
 import { DashboardHeader } from '@/components/dashboard/dashboard-header'
@@ -26,10 +25,9 @@ export function DashboardCanvasV3({
   const layoutScenario = useWorkbenchStore(state => state.layoutScenario)
   const setLayoutScenario = useWorkbenchStore(state => state.setLayoutScenario)
   const pageCount = useWorkbenchStore(state => state.pageCount)
-  const editingReportId = useWorkbenchStore(state => state.editingReportId)
   // const pinnedReports = useWorkbenchStore(state => state.pinnedReports)
-  const contentLayout = useUIStore(s => s.contentLayout)
-  const sidebarLayout = useUIStore(s => s.sidebarLayout)
+  const analysisSplit = useUIStore(s => s.analysisSplit)
+  const sidebarWidth = useUIStore(s => s.sidebarWidth)
 
   const { zoom, layout } = canvasConfig
   const isA4 = layout === 'a4'
@@ -69,7 +67,7 @@ export function DashboardCanvasV3({
   // Center when zoom or panel layout changes
   useEffect(() => {
     centerCanvas(true)
-  }, [zoom, contentLayout, sidebarLayout, centerCanvas])
+  }, [zoom, analysisSplit, sidebarWidth, centerCanvas])
 
   // Center on window resize
   useEffect(() => {
@@ -241,10 +239,6 @@ export function DashboardCanvasV3({
             )}
           </div>
         </div>
-
-        {editingReportId && (
-          <ChartFullView key={editingReportId} />
-        )}
       </div>
     </div>
   )

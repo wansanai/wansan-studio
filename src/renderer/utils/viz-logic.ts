@@ -1,15 +1,16 @@
+import type { ReportData } from '@shared/types/dashboard'
 import type { ChartType } from '@shared/types/dashboard'
 
 export type DisplayMode = 'chart' | 'table' | 'bignumber' | 'empty' | 'text'
 
 export function getDisplayMode(
   chartType: ChartType | undefined,
-  data: any[],
-  vizConfig?: any
+  data: Array<Record<string, unknown>>,
+  vizConfig?: ReportData['vizConfig']
 ): DisplayMode {
   const hasData = data && data.length > 0
-  if (!hasData && chartType !== 'text') return 'empty'
 
+  if (!hasData && chartType !== 'text' && chartType !== 'table') return 'empty'
   if (chartType === 'kpi') return 'bignumber'
   if (chartType === 'text') return 'text'
 

@@ -31,6 +31,16 @@ const SQL_SYNTAX_RULES = `
     -   When joining "v_" tables, **STRICTLY** use table aliases to avoid ambiguous columns.
 `
 
+const TIME_SERIES_RULES = `
+### 📈 TIME SERIES ANALYSIS RULES (GROWTH / MOM / YOY)
+1.  **NO PRE-CALCULATION**: Do NOT assume columns like "_MoM" or "_YoY" exist.
+2.  **EXPLICIT CALCULATION**: You **MUST** use Window Functions (LAG) to calculate growth.
+    -   Formula: \`(SUM("val") - LAG(SUM("val")) OVER (ORDER BY "date_col")) / NULLIF(LAG(SUM("val")) OVER (ORDER BY "date_col"), 0)\`
+3.  **CTE STRATEGY**: 
+    -   **STEP 1**: Aggregate data by the requested time granularity (Day/Month/Year) in a CTE.
+    -   **STEP 2**: Calculate LAG/Growth in the main query using the CTE.
+`
+
 const CALCULATION_RULES = `
 ### 🧮 CALCULATION RULES
 1.  **DERIVE METRICS**: If a requested metric is not in the schema, **TRY TO CALCULATE** it (e.g., \`"Sales" - "Cost"\`).
@@ -46,6 +56,15 @@ const VISUALIZATION_RULES = `
     -   **SQL**: \`SELECT "date", "region", sum("sales") FROM ... GROUP BY 1, 2 ORDER BY 1\`
     -   **Config**: \`x_axis: "date", y_axis: "sum(sales)", split_by: "region"\`.
     -   This will create a multi-series chart where each "region" is a separate line/bar.
+`
+
+const PERFORMANCE_RULES = `
+### 🚀 PERFORMANCE OPTIMIZATION RULES
+1.  **ROW COUNT AWARENESS**: Check the table description for row counts.
+2.  **LARGE TABLES (> 100,000 rows)**:
+    -   **AGGREGATION FIRST**: Always prefer aggregated queries (GROUP BY) over raw data selection.
+    -   **LIMIT CLAUSE**: If the user asks for raw data (e.g., "Show me orders"), you **MUST** append \`LIMIT 100\` unless explicitly instructed otherwise (e.g., "Export all").
+    -   **DISTINCT COUNTS**: Use \`APPROX_COUNT_DISTINCT(col)\` instead of \`COUNT(DISTINCT col)\` for high-cardinality columns to ensure speed.
 `
 
 // --- 2. DYNAMIC GENERATORS ---
@@ -64,6 +83,24 @@ const getDomainContext = (rules: DomainRule[]) => {
 
   return header + list + footer
 }
+
+export const METRIC_GEN_SYSTEM_PROMPT = (columnList: string) => `
+You are a DuckDB expert. Convert user natural language into a valid ROW-LEVEL SQL expression fragment for a SELECT clause.
+Available columns in the current context:
+${columnList}
+
+CRITICAL SYNTAX RULES:
+1. **ALWAYS** wrap column names in DOUBLE QUOTES ( ").
+2. For SQLite/DuckDB compatibility, use standard SQL operators.
+3. **ONLY** generate ROW-LEVEL expressions (e.g., "A" + "B", "A" * 0.1).
+4. **NEVER** use aggregate functions like SUM(), AVG(), COUNT(), MAX(), MIN(), etc.
+
+Return ONLY the SQL expression, no commentary, no 'SELECT', no 'AS'.`
+
+export const getMetricGenUserPrompt = (input: string, mode: 'generate' | 'refine') =>
+  mode === 'generate'
+    ? `Create an expression for: ${input}`
+    : `Refine this expression: ${input}`
 
 const getLocalizationRule = (language: 'en' | 'zh') => `
 ### 🌐 LOCALIZATION RULE
@@ -139,6 +176,8 @@ export const getAnalysisSystemPrompt = (
     getLocalizationRule(language),
     SMART_FILTER_CREATION_RULES,
     SQL_SYNTAX_RULES,
+    PERFORMANCE_RULES, // [NEW] Inject Performance Rules
+    TIME_SERIES_RULES, // [NEW] Explicit Time Series Logic
     CALCULATION_RULES,
     VISUALIZATION_RULES,
     ANALYSIS_OUTPUT_FORMAT(suggestionCount),
@@ -160,6 +199,7 @@ export const getFixSystemPrompt = (
     SQL_SYNTAX_RULES, // Syntax is key for fixing
     SMART_FILTER_CREATION_RULES, // Enable creation if hardcoded values are wrong
     SMART_FILTER_PRESERVATION_RULES, // Preserve templates if already present
+    PERFORMANCE_RULES, // [NEW] Fixes should also be performant
     // No Viz/Calculation rules needed for pure SQL fix
   ].join('\n')
 }
@@ -171,8 +211,7 @@ export const CONTEXT_ANALYSIS_SYSTEM_PROMPT = `
 You are an expert Database Architect specializing in Data Modeling and Business Intelligence.
 Your goal is to analyze the provided table schemas to:
 1. Infer "Foreign Key" relationships (Data Modeling).
-2. Deduce "Smart Metrics" (Business Logic) based on columns within the same table.
-3. Generate 6 relevant "Starter Prompts" (Business Intelligence) for a user to explore the data.
+2. Generate 6 relevant "Starter Prompts" (Business Intelligence) for a user to explore the data.
 
 ---
 
@@ -187,23 +226,7 @@ Your goal is to analyze the provided table schemas to:
 
 ---
 
-### 🧮 PART 2: SMART METRICS (SINGLE TABLE ONLY)
-Look for columns **within the same table** that can be combined to form standard business metrics.
--   **CRITICAL CONSTRAINT**: The SQL Expression MUST be a valid formula using ONLY columns from the current \`tableName\`.
--   **NO "NULL" ALLOWED**: If a metric cannot be calculated due to missing columns, **DO NOT SUGGEST IT**. Never return "NULL" as \`sqlExpression\`.
--   **CONFIDENCE THRESHOLD**: Only suggest metrics where you have high confidence (> 0.7). If you are unsure or the data is missing, omit the metric entirely.
--   **STRICT FORBIDDEN**: NEVER use \`SELECT\`, \`FROM\`, \`JOIN\`, or any subqueries.
--   **STRICT FORBIDDEN**: NEVER reference other tables in the expression.
--   **SCOPE**: Only suggest metrics that can be calculated using fields already present in the same row of the same table.
--   **NAMING**: Use professional business terms (e.g., "Gross Margin", "Total Revenue").
--   **Examples**:
-    -   If table has \`quantity\` and \`unit_price\`, suggest Metric: "Total Revenue" -> \`"quantity" * "unit_price"\`.
-    -   If table has \`profit\` and \`revenue\`, suggest Metric: "Profit Margin" -> \`"profit" / NULLIF("revenue", 0)\`.
-    -   If table has \`birth_date\`, suggest Metric: "Age" -> \`date_diff('year', "birth_date", current_date())\`.
-
----
-
-### 💡 PART 3: STARTER PROMPTS
+### 💡 PART 2: STARTER PROMPTS
 Generate 6 short, engaging, and diverse questions (max 60 chars) that a user might ask about this data.
 -   Focus on: Aggregation ("Total Sales"), Trends ("Monthly Growth"), Comparisons ("Top Products"), or Anomalies.
 -   Use the actual column names or business terms inferred from the schema.
@@ -229,16 +252,6 @@ Structure:
       "reason": "Strong Match: Column names align semantically."
     }
   ],
-  "metrics": [
-    {
-      "name": "Total Revenue",
-      "tableName": "t_orders",
-      "sqlExpression": "\\"quantity\\" * \\"unit_price\\"",
-      "description": "Calculated revenue per order",
-      "confidence": 0.95,
-      "reason": "Standard price * quantity pattern detected."
-    }
-  ],
   "suggestedPrompts": [
     "Analyze sales trend by month",
     "Who are the top 10 customers?",
@@ -261,8 +274,8 @@ export function serializeSchemas(schemas: TableSchema[]): string {
 
       let columnsStr = table.columns
         .filter(col => {
-          // [NEW] Respect Visibility
-          return col.semantic?.isVisibleToAI !== false
+          // [NEW] Respect Visibility & Internal Columns
+          return col.semantic?.isVisibleToAI !== false && col.name !== '_ws_row_id'
         })
         .map(col => {
           let hint = ''
@@ -323,6 +336,11 @@ export function serializeSchemas(schemas: TableSchema[]): string {
         ? '\n  [Info] This Wide Table includes joined columns from related tables (format: "fk__col").'
         : ''
 
+      // [NEW] Row Count Info
+      const rowCountStr = table.rowCount
+        ? `\nRows: ${table.rowCount.toLocaleString()}${table.rowCount > 100000 ? ' [LARGE TABLE: Prefer Aggregation/LIMIT]' : ''}`
+        : ''
+
       const descStr = table.description
         ? ` (Source: "${table.description}"${viewNote})`
         : viewNote
@@ -341,7 +359,7 @@ export function serializeSchemas(schemas: TableSchema[]): string {
             .join('\n')
       }
 
-      return `Table: "${displayTableName}"${descStr}\nColumns:\n${columnsStr}${joinedHint}${relationsStr}`
+      return `Table: "${displayTableName}"${descStr}${rowCountStr}\nColumns:\n${columnsStr}${joinedHint}${relationsStr}`
     })
     .join('\n\n')
 }

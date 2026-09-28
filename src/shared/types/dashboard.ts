@@ -1,6 +1,8 @@
 import type { Layout } from 'react-grid-layout'
-import type { FilterParam } from '../schemas/analysis'
+import type { FilterParam, InsightResult } from '../schemas/analysis'
 import type { DomainRule } from '../types'
+
+export type { InsightResult }
 
 export type ChartType =
   | 'bar'
@@ -19,7 +21,7 @@ export interface InsightGenerationContext {
   chartTitle: string
   chartType: string
   aggregatedData: Array<Record<string, unknown>>
-  vizConfig?: any
+  vizConfig?: Record<string, unknown>
   sql?: string
   summary?: string
   language?: 'en' | 'zh'
@@ -55,25 +57,6 @@ export interface ReportData {
   insight?: InsightResult
   /** Timestamp when insight was generated */
   insightTime?: number
-}
-
-export interface InsightResult {
-  summary: string
-  findings: Array<{
-    id: string
-    markdown: string
-    sentiment?:
-      | 'positive'
-      | 'negative'
-      | 'neutral'
-      | 'warning'
-      | 'growth'
-      | 'discovery'
-      | 'target'
-      | 'info'
-    relatedItems?: string[]
-  }>
-  recommendation?: string
 }
 
 export interface ReportWidget {

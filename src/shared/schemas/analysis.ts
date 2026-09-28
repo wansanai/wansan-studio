@@ -75,7 +75,6 @@ export const SmartMetricSchema = z.object({
 
 export const ContextAnalysisResultSchema = z.object({
   relationships: z.array(RelationSuggestionSchema),
-  metrics: z.array(SmartMetricSchema).optional(),
   suggestedPrompts: z.array(z.string().max(60)),
 })
 
@@ -85,3 +84,29 @@ export const FixSQLResultSchema = z.object({
   is_template: z.boolean().optional().default(false),
   missing_params: z.array(ParamSchema).optional(),
 })
+
+export const FindingSchema = z.object({
+  id: z.string(),
+  markdown: z.string(),
+  sentiment: z
+    .enum([
+      'positive',
+      'negative',
+      'neutral',
+      'warning',
+      'growth',
+      'discovery',
+      'target',
+      'info',
+    ])
+    .optional(),
+  relatedItems: z.array(z.string()).optional(),
+})
+
+export const InsightResultSchema = z.object({
+  summary: z.string(),
+  findings: z.array(FindingSchema),
+  recommendation: z.string().optional(),
+})
+
+export type InsightResult = z.infer<typeof InsightResultSchema>

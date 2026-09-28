@@ -15,9 +15,14 @@ import { useSettingsStore } from '../../stores/useSettingsStore'
 import { Analytics } from '../../services/analytics'
 import { useProGate } from '@/hooks/use-pro-gate'
 import { sanitizeTableName, cleanDisplayName } from '@shared/naming-utils'
+import type { ColumnSchema, DataSourceConfig } from '@shared/types'
 
 const TRIAL_ROW_LIMIT = 50000
 const TRIAL_FILE_LIMIT = 3
+
+function getErrorStack(error: unknown): string {
+  return error instanceof Error && error.stack ? error.stack : String(error)
+}
 
 export function DataIngestionWizard() {
   const {
@@ -53,7 +58,7 @@ export function DataIngestionWizard() {
 
     if (tempTableNames.length > 0 || tempFiles.length > 0) {
       try {
-        await window.electronAPI.cleanupIngestion(tempTableNames, tempFiles)
+        await window.electronAPI.cleanupIngestion({ tempTableNames, tempFilePaths: tempFiles })
       } catch (e) {
         console.error('Failed to cleanup staging tables/files', e)
       }
@@ -138,23 +143,25 @@ export function DataIngestionWizard() {
 
           finalizedTempTables.add(task.tableName)
 
-          const columns = result.data.columns.map(c => {
-            // Try to preserve key status if column name matches
-            const oldCol = targetFile.columns.find(old => old.name === c.name)
-            return {
-              name: c.name,
-              safeName: c.name,
-              type: c.type,
-              sampleValues: c.sampleValues || [],
-              isPrimaryKey: oldCol ? oldCol.isPrimaryKey : false,
-            }
-          })
+          const columns = result.data.columns
+            .filter(c => c.name !== '_ws_row_id')
+            .map(c => {
+              // Try to preserve key status if column name matches
+              const oldCol = targetFile.columns.find(old => old.name === c.name)
+              return {
+                name: c.name,
+                safeName: c.name,
+                type: c.type,
+                sampleValues: c.sampleValues || [],
+                isPrimaryKey: oldCol ? oldCol.isPrimaryKey : false,
+              }
+            })
 
           const displayName =
             task.finalDisplayName || cleanDisplayName(task.fileName, task.sourceName)
 
           // Construct structured source config
-          const sourceConfig: any = task.connectionId ? {
+          const sourceConfig: DataSourceConfig = task.connectionId ? {
             type: 'database',
             connectionId: task.connectionId,
             table: task.originalTableName || '',
@@ -169,7 +176,7 @@ export function DataIngestionWizard() {
           // Use reloadFile to safely update schema and validate relations
           useProjectStore.getState().reloadFile(targetFile.id, {
             lastModified: Date.now(),
-            newColumns: columns as any,
+            newColumns: columns as ColumnSchema[],
           })
 
           // Update other metadata that reloadFile doesn't handle
@@ -207,25 +214,27 @@ export function DataIngestionWizard() {
           finalizedTempTables.add(task.tableName)
 
           // Map backend schema (with fresh samples) to frontend file model
-          const columns = result.data.columns.map(c => {
-            const userConfig = task.columns.find(uc => uc.name === c.name)
-            return {
-              name: c.name,
-              safeName: c.name,
-              type: c.type,
-              sampleValues: c.sampleValues || [], // Use fresh samples from DB
-              isKey: userConfig?.isPrimaryKey || false,
-              isPrimaryKey: userConfig?.isPrimaryKey || false,
-              semantic: userConfig?.description ? { description: userConfig.description } : undefined // [NEW] Persist description
-            }
-          })
+          const columns = result.data.columns
+            .filter(c => c.name !== '_ws_row_id')
+            .map(c => {
+              const userConfig = task.columns.find(uc => uc.name === c.name)
+              return {
+                name: c.name,
+                safeName: c.name,
+                type: c.type,
+                sampleValues: c.sampleValues || [], // Use fresh samples from DB
+                isKey: userConfig?.isPrimaryKey || false,
+                isPrimaryKey: userConfig?.isPrimaryKey || false,
+                semantic: userConfig?.description ? { description: userConfig.description } : undefined // [NEW] Persist description
+              }
+            })
 
           // Construct a friendly display name
           const displayName =
             task.finalDisplayName || cleanDisplayName(task.fileName, task.sourceName)
 
           // Construct structured source config
-          const sourceConfig: any = task.connectionId ? {
+          const sourceConfig: DataSourceConfig = task.connectionId ? {
             type: 'database',
             connectionId: task.connectionId,
             table: task.originalTableName || '',
@@ -242,7 +251,7 @@ export function DataIngestionWizard() {
             tableName: finalTableName,
             source: sourceConfig, // [REFACTOR]
             status: 'ready',
-            columns: columns as any,
+            columns: columns as ColumnSchema[],
             rowCount: result.data.rowCount,
           })
           addedFileIds.push(fileId)
@@ -261,7 +270,7 @@ export function DataIngestionWizard() {
         .filter(Boolean) as string[]
 
       if (tablesToClean.length > 0 || filesToClean.length > 0) {
-        await window.electronAPI.cleanupIngestion(tablesToClean, filesToClean)
+        await window.electronAPI.cleanupIngestion({ tempTableNames: tablesToClean, tempFilePaths: filesToClean })
       }
 
       if (addedFileIds.length > 0) {
@@ -288,14 +297,14 @@ export function DataIngestionWizard() {
       })
 
       close()
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Final ingestion failed', e)
       useUIStore
         .getState()
         .showError(
           t('wizard.ingestion_failed'),
           t('chat:error_processing_request'),
-          e.stack || String(e)
+          getErrorStack(e)
         )
     } finally {
       setProcessing(false)

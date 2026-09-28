@@ -308,7 +308,11 @@ export async function exportDashboardToHtml(
   // 3. Save File via Electron IPC
   try {
     const fileName = `Report_${new Date().toISOString().split('T')[0]}.html`
-    await (window.electronAPI as any).saveFile(finalHtml, 'html', fileName)
+    await window.electronAPI.saveFile({
+      content: finalHtml,
+      extension: 'html',
+      name: fileName
+    })
   } catch (err) {
     console.error('Failed to save HTML report', err)
     throw err

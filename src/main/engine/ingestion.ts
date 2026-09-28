@@ -11,6 +11,28 @@ import { TempFileManager } from '../utils/temp-manager'
 
 type DBService = NativeDatabaseService
 
+type IngestionProgressInfo = {
+  rowCount?: number
+  isPercentage?: boolean
+  progress?: number
+}
+
+interface InspectSheetResult {
+  sourceName: string
+  previewHeaders?: string[]
+}
+
+interface ExcelWorkerSheetResult {
+  sheetName: string
+  csvFilePath?: string
+  error?: string
+}
+
+type ExcelWorkerMessage =
+  | ({ type: 'progress' } & IngestionProgressInfo)
+  | { success: true; data: InspectSheetResult[] | ExcelWorkerSheetResult[] }
+  | { success: false; error?: string; stack?: string }
+
 /**
  * Common logic to fetch column schema and sample values after a table is created
  */
@@ -24,18 +46,18 @@ async function fetchTableSchema(
   )
 
   const columns: ColumnSchema[] = await Promise.all(
-    columnsResult.map(async (col: any) => {
-      const finalType = normalizeDuckDBType(col.type)
+    columnsResult.map(async (col: Record<string, unknown>) => {
+      const finalType = normalizeDuckDBType(col.type as string)
       const sampleValues = await getSampleValues(
         databaseService,
         tableName,
-        col.name,
+        col.name as string,
         finalType
       )
 
       return {
-        name: col.name,
-        safeName: col.name,
+        name: col.name as string,
+        safeName: col.name as string,
         type: finalType,
         sampleValues,
       }
@@ -55,7 +77,7 @@ async function fetchTableSchema(
 export async function ingestJsonData(
   databaseService: DBService,
   tableName: string,
-  rows: any[]
+  rows: unknown[]
 ): Promise<TableSchema> {
   try {
     const jsonContent = JSON.stringify(rows)
@@ -91,35 +113,55 @@ export async function getSampleValues(
   tableName: string,
   columnName: string,
   columnType: ColumnType
-): Promise<any[]> {
+): Promise<unknown[]> {
   const rows = await databaseService.query(
     `SELECT DISTINCT "${columnName}"
      FROM "${tableName}"
      WHERE "${columnName}" IS NOT NULL LIMIT 3`
   )
 
-  return rows.map((row: any) => {
+  return rows.map((row: Record<string, unknown>) => {
     const val = row[columnName]
     return processSampleValue(val, columnType)
   })
 }
 
+export function ingestExcelFile(
+  filePath: string,
+  databaseService: DBService,
+  fileName: string,
+  targetTableName: string | undefined,
+  targetSheetName: string | undefined,
+  onProgress: ((progressInfo: IngestionProgressInfo) => void) | undefined,
+  prefix: string | undefined,
+  typesParam: string | undefined,
+  limitRows: number | undefined,
+  type: 'inspect'
+): Promise<InspectSheetResult[]>
+export function ingestExcelFile(
+  filePath: string,
+  databaseService: DBService,
+  fileName: string,
+  targetTableName?: string,
+  targetSheetName?: string,
+  onProgress?: (progressInfo: IngestionProgressInfo) => void,
+  prefix?: string,
+  typesParam?: string,
+  limitRows?: number,
+  type?: 'convert'
+): Promise<TableSchema[]>
 export async function ingestExcelFile(
   filePath: string,
   databaseService: DBService,
   fileName: string,
   targetTableName?: string,
   targetSheetName?: string,
-  onProgress?: (progressInfo: {
-    rowCount?: number
-    isPercentage?: boolean
-    progress?: number
-  }) => void,
+  onProgress?: (progressInfo: IngestionProgressInfo) => void,
   prefix: string = 't_',
   typesParam?: string,
   limitRows?: number,
   type: 'inspect' | 'convert' = 'convert' // [NEW]
-): Promise<any[]> {
+): Promise<InspectSheetResult[] | TableSchema[]> {
   const workerPath = path.join(
     app.getAppPath(),
     'dist/main/workers/excelWorker.js'
@@ -139,21 +181,21 @@ export async function ingestExcelFile(
       prefix,
     })
 
-    worker.on('message', async (message: any) => {
-      if (message.type === 'progress') {
+    worker.on('message', async (message: ExcelWorkerMessage) => {
+      if ('type' in message && message.type === 'progress') {
         if (onProgress) onProgress(message)
         return
       }
 
-      if (message.success) {
+      if ('success' in message && message.success) {
         if (type === 'inspect') {
-          resolve(message.data) // [{ sourceName, previewHeaders }]
+          resolve(message.data as InspectSheetResult[])
           return
         }
 
         const results: TableSchema[] = []
 // ... (rest of convert logic remains same)
-        const { data } = message
+        const data = message.data as ExcelWorkerSheetResult[]
 
         try {
           for (const { sheetName, csvFilePath, error } of data) {
@@ -210,17 +252,17 @@ export async function ingestExcelFile(
               `PRAGMA table_info('${tableName}');`
             )
             const columns: ColumnSchema[] = []
-            for (const col of columnsResult) {
-              const finalType = normalizeDuckDBType(col.type)
+            for (const col of columnsResult as Record<string, unknown>[]) {
+              const finalType = normalizeDuckDBType(col.type as string)
               const sampleValues = await getSampleValues(
                 databaseService,
                 tableName,
-                col.name,
+                col.name as string,
                 finalType
               )
               columns.push({
-                name: col.name,
-                safeName: col.name,
+                name: col.name as string,
+                safeName: col.name as string,
                 type: finalType as ColumnType,
                 sampleValues,
               })
@@ -239,10 +281,11 @@ export async function ingestExcelFile(
         } catch (dbError) {
           reject(dbError)
         }
-      } else {
-        const err = new Error(message.error || 'Unknown Worker Error')
-        if (message.stack) {
-           err.stack = message.stack
+      } else if ('success' in message && !message.success) {
+        const failedMessage = message as Extract<ExcelWorkerMessage, { success: false }>
+        const err = new Error(failedMessage.error || 'Unknown Worker Error')
+        if (failedMessage.stack) {
+           err.stack = failedMessage.stack
         }
         reject(err)
       }

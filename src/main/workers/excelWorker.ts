@@ -5,6 +5,7 @@ import {
 import fs from 'fs-extra'
 import path from 'path'
 import ExcelJS from 'exceljs'
+import type { ExcelProcessResult, StreamingProcessResult } from './exceljsUtils'
 
 interface WorkerMessage {
   type: 'inspect' | 'convert'
@@ -14,8 +15,42 @@ interface WorkerMessage {
   targetTableName?: string
 }
 
+interface WorkerInspectResult {
+  sourceName: string
+  previewHeaders: string[]
+}
+
+interface WorkerConvertResult {
+  sheetName: string
+  csvFilePath: string
+  rowCount: number
+}
+
+type WorkbookLoadInput = Parameters<ExcelJS.Workbook['xlsx']['load']>[0]
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function getErrorStack(error: unknown) {
+  return error instanceof Error ? error.stack : undefined
+}
+
+function toInspectData(results: Array<Pick<StreamingProcessResult | ExcelProcessResult, 'sheetName' | 'headers'>>): WorkerInspectResult[] {
+  return results.map(result => ({
+    sourceName: result.sheetName,
+    previewHeaders: result.headers || [],
+  }))
+}
+
 process.on('message', async (message: WorkerMessage) => {
-  const { type = 'convert', filePath, outputDir, targetSheetName, targetTableName } = message
+  const {
+    type = 'convert',
+    filePath,
+    outputDir,
+    targetSheetName,
+    targetTableName,
+  } = message
   const onlyHeaders = type === 'inspect'
 
   try {
@@ -24,8 +59,7 @@ process.on('message', async (message: WorkerMessage) => {
 
     const fileBuffer = await fs.readFile(filePath)
     const isZip = fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b
-    
-    // 1. Unified Path: Try Streaming (XLSX)
+
     if (isZip) {
       try {
         const { results, allSheetsCount } = await processExcelFileStreaming(
@@ -41,31 +75,29 @@ process.on('message', async (message: WorkerMessage) => {
 
         if (process.send) {
           if (onlyHeaders) {
-            const inspectData = results.map(r => ({ sourceName: r.sheetName, previewHeaders: r.headers || [] }))
-            process.send({ success: true, data: inspectData })
+            process.send({ success: true, data: toInspectData(results) })
           } else {
             process.send({ success: true, data: results, allSheetsCount })
           }
         }
         return
-      } catch (streamError: any) {
-        // Only warn if we are going to try buffer fallback
-        console.warn(`[ExcelWorker] Streaming failed, attempting Buffer fallback. Reason:`, streamError.message)
+      } catch (streamError: unknown) {
+        console.warn(
+          '[ExcelWorker] Streaming failed, attempting Buffer fallback. Reason:',
+          getErrorMessage(streamError)
+        )
       }
     }
 
-    // 2. Fallback Path: Buffer (XLS or Corrupt XLSX)
-    // [FIX] In inspect mode, we must NOT suppress errors here. 
-    // If streaming failed AND buffer fails, the file is unreadable.
     if (onlyHeaders) {
       const workbook = new ExcelJS.Workbook()
-      // If this throws, we let it bubble up to the main catch block
-      await workbook.xlsx.load(fileBuffer as any) 
-      
-      const sheets = workbook.worksheets.map(ws => {
+      await workbook.xlsx.load(fileBuffer as unknown as WorkbookLoadInput)
+
+      const sheets: WorkerInspectResult[] = workbook.worksheets.map(ws => {
         const firstRow = ws.getRow(1)
-        const headers = Array.isArray(firstRow.values) 
-          ? (firstRow.values as any[]).slice(1).map(v => v === null ? '' : String(v))
+        const rowValues = firstRow.values as ExcelJS.CellValue[]
+        const headers = Array.isArray(rowValues)
+          ? rowValues.slice(1).map(value => (value === null ? '' : String(value)))
           : []
         return { sourceName: ws.name, previewHeaders: headers }
       })
@@ -88,13 +120,11 @@ process.on('message', async (message: WorkerMessage) => {
     )
 
     if (onlyHeaders) {
-      const inspectData = results.map(r => ({ sourceName: r.sheetName, previewHeaders: r.headers || [] }))
-      if (process.send) process.send({ success: true, data: inspectData })
+      if (process.send) process.send({ success: true, data: toInspectData(results) })
       return
     }
 
-    // Process convert results
-    const processedResults = []
+    const processedResults: WorkerConvertResult[] = []
     for (const res of results) {
       if (res.error) continue
       const tempCsvName = `temp_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.csv`
@@ -102,7 +132,7 @@ process.on('message', async (message: WorkerMessage) => {
       await fs.writeFile(csvFilePath, res.csvData)
       processedResults.push({
         sheetName: res.sheetName,
-        csvFilePath: csvFilePath,
+        csvFilePath,
         rowCount: res.csvData.split('\n').length - 1,
       })
     }
@@ -110,10 +140,13 @@ process.on('message', async (message: WorkerMessage) => {
     if (process.send) {
       process.send({ success: true, data: processedResults, allSheetsCount })
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (process.send) {
-        // [FIX] Send stack trace
-        process.send({ success: false, error: err.message, stack: err.stack })
+      process.send({
+        success: false,
+        error: getErrorMessage(err),
+        stack: getErrorStack(err),
+      })
     }
   } finally {
     process.exit(0)

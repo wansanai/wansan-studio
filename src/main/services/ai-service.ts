@@ -1,16 +1,25 @@
 import Store from 'electron-store'
-import type { ClientOptions } from 'openai'
 import { OpenAI } from 'openai'
+import { BrowserWindow } from 'electron'
+import { AsyncLocalStorage } from 'async_hooks'
 import {
   analyzeContext,
-  fixSQL,
   generateAnalysis,
-  generateInsight,
-} from '../engine/ai-bridge'
-import { analyzeSemantics as analyzeSemanticsEngine } from '../engine/semantic-engine'
+} from '../engine/context-analyzer'
+import { fixSQL } from '../engine/sql-repair'
+import { generateInsight } from '../engine/insight-generator'
+import { analyzeSemantics as analyzeSemanticsEngine } from '../engine/semantic-analyzer'
+import { previewExtraction } from '../engine/extractor'
+import {
+  METRIC_GEN_SYSTEM_PROMPT,
+  getMetricGenUserPrompt,
+} from '../engine/prompts'
 import crypto from 'crypto'
 import { secureGet, secureSet } from './secure-storage'
 import { getAppUserAgent } from '../utils/env'
+import { tokenManager } from './token-manager'
+import { TokenActionType } from '../../shared/types/token-audit'
+import type { FilterParam } from '@shared/schemas/analysis.ts'
 import type {
   AIAnalysisContext,
   AIAnalysisResult,
@@ -21,30 +30,58 @@ import type {
   TableSchema,
 } from '@shared/types.ts'
 import { InsightGenerationContext } from '@shared/types/dashboard'
+import { BatchProcessor } from './batch-processor'
 
 // --- Security Config (Must match obfuscate-tool.js) ---
 const MASTER_SALT = 'wansan-studio-2025-special-security-salt'
 
+interface AuditContext {
+  projectPath: string | null
+  action: TokenActionType
+  snapshot?: {
+    table?: string
+    column?: string
+    row_count?: number
+    prompt_preview?: string
+  }
+}
+
+type CompletionCreateArgs = Parameters<OpenAI['chat']['completions']['create']>
+type CompletionTarget = OpenAI['chat']['completions']
+type OpenAIUsage = {
+  prompt_tokens: number
+  completion_tokens: number
+}
+type OpenAIResponseWithUsage = {
+  usage?: OpenAIUsage
+  model?: string
+}
+
+function getPromptPreviewFromMessages(args: CompletionCreateArgs) {
+  const payload = args[0]
+  if (!payload || !('messages' in payload) || !Array.isArray(payload.messages)) {
+    return undefined
+  }
+  const userMessage = payload.messages[1]
+  if (!userMessage || typeof userMessage.content !== 'string') {
+    return undefined
+  }
+  return userMessage.content.substring(0, 100)
+}
+
 function decryptBuiltinKey(obfuscated: string): string {
   try {
-    const parts = obfuscated.split(':')
-    if (parts.length !== 3) return '' // Invalid format
-    const [ivBase64, authTagBase64, encryptedBase64] = parts
+    const [ivBase64, authTagBase64, encryptedBase64] = obfuscated.split(':')
+    if (!encryptedBase64) return ''
+
     const iv = Buffer.from(ivBase64, 'base64')
     const authTag = Buffer.from(authTagBase64, 'base64')
-    // Derive same key
-    const key = crypto.pbkdf2Sync(
-      MASTER_SALT,
-      'salt-pepper',
-      100000,
-      32,
-      'sha256'
-    )
+    const key = crypto.pbkdf2Sync(MASTER_SALT, 'salt-pepper', 100000, 32, 'sha256')
+
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
     decipher.setAuthTag(authTag)
-    let decrypted = decipher.update(encryptedBase64, 'base64', 'utf8')
-    decrypted += decipher.final('utf8')
-    return decrypted
+
+    return decipher.update(encryptedBase64, 'base64', 'utf8') + decipher.final('utf8')
   } catch (e) {
     console.error('[AI Service] Decryption failed:', e)
     return ''
@@ -71,83 +108,134 @@ const store = new Store({
 
 export class AIService {
   private openai: OpenAI | null = null
-  private model = 'gpt-4-turbo-preview'
+  private model = ''
   // Internal cache for sensitive builtin config
   private builtinConfig: AIConfig | null = null
+  private batchProcessor: BatchProcessor | null = null
+
+  // [V1.7] Audit Infrastructure
+  private auditStore = new AsyncLocalStorage<AuditContext>()
+  private auditedClient: OpenAI | null = null
 
   constructor() {
     this.initBuiltinConfig()
     this.loadConfig()
   }
 
-  private initBuiltinConfig() {
-    try {
-      const baseUrl = process.env.VITE_BUILTIN_BASE_URL
-      const rawKey = process.env.VITE_BUILTIN_API_KEY
-      const models = process.env.VITE_BUILTIN_MODELS
+  /**
+   * Initializes a persistent proxied OpenAI client that reads audit context
+   * from AsyncLocalStorage automatically.
+   */
+  private initAuditedClient() {
+    const base = this.requireOpenAI()
 
-      if (rawKey) {
-        // 1. Try decrypting with AES-GCM (for production/CI)
-        let apiKey = decryptBuiltinKey(rawKey)
-        // 2. Fallback: If decryption fails (returns empty string), try Base64 (for simpler dev setups)
-        if (!apiKey && !rawKey.includes(':')) {
-          try {
-            const decoded = Buffer.from(rawKey, 'base64').toString('utf-8')
-            if (/^[a-zA-Z0-9_\-.]+$/.test(decoded)) {
-              apiKey = decoded
-            }
-          } catch {
-            /* ignore */
+    const completionProxy = {
+      get: (target: CompletionTarget, prop: string) => {
+        if (prop !== 'create') return Reflect.get(target, prop)
+
+        return async (...args: CompletionCreateArgs) => {
+          const response = await target.create(...args) as OpenAIResponseWithUsage
+          const context = this.auditStore.getStore()
+
+          if (response?.usage && context) {
+            tokenManager.logTransaction(context.projectPath, {
+              action: context.action,
+              model: response.model || this.model,
+              inputTokens: response.usage.prompt_tokens,
+              outputTokens: response.usage.completion_tokens,
+              snapshot: context.snapshot || {
+                prompt_preview: getPromptPreviewFromMessages(args),
+              },
+            }).catch(err => console.error('[Audit] Log failed', err))
           }
+          return response
         }
-        // 3. Fallback: Use raw key if all else fails
-        if (!apiKey) {
-          apiKey = rawKey
-        }
-        this.builtinConfig = {
-          apiKey,
-          baseURL: baseUrl || '',
-          model: models?.split(',')[0] || '',
-          models: models?.split(',') || [],
-          provider: 'custom',
-          isManaged: true,
-        }
-        console.log(`[AI Service] Managed config loaded.`)
       }
+    }
+
+    this.auditedClient = new Proxy(base, {
+      get: (target, prop, receiver) => {
+        if (prop === 'chat') {
+          return new Proxy(target.chat, {
+            get: (chatTarget, chatProp) => {
+              if (chatProp === 'completions') {
+                return new Proxy(chatTarget.completions, completionProxy)
+              }
+              return Reflect.get(chatTarget, chatProp)
+            },
+          })
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+  }
+
+  /**
+   * Wrapper to run an AI task within a specific audit context.
+   */
+  private async withAudit<T>(context: AuditContext, task: (client: OpenAI) => Promise<T>): Promise<T> {
+    if (!this.auditedClient) this.initAuditedClient()
+    return this.auditStore.run(context, () => task(this.auditedClient!))
+  }
+
+  public setBatchProcessor(processor: BatchProcessor) {
+    this.batchProcessor = processor
+  }
+
+  private initBuiltinConfig() {
+    const rawKey = process.env.VITE_BUILTIN_API_KEY
+    if (!rawKey) return
+
+    try {
+      // 1. Decrypt (Production/CI)
+      let apiKey = decryptBuiltinKey(rawKey)
+
+      // 2. Base64 Fallback (Dev)
+      if (!apiKey && !rawKey.includes(':')) {
+        const decoded = Buffer.from(rawKey, 'base64').toString('utf-8')
+        if (/^[a-zA-Z0-9_\-.]+$/.test(decoded)) apiKey = decoded
+      }
+
+      // 3. Raw Fallback
+      apiKey = apiKey || rawKey
+
+      const models = (process.env.VITE_BUILTIN_MODELS || '').split(',')
+
+      this.builtinConfig = {
+        apiKey,
+        baseURL: process.env.VITE_BUILTIN_BASE_URL || '',
+        model: models[0] || '',
+        models,
+        provider: 'custom',
+        isManaged: true,
+      }
+      console.log(`[AI Service] Managed config loaded.`)
     } catch (e) {
       console.error('[AI Service] Failed to parse builtin config:', e)
     }
   }
 
   private loadConfig() {
-    const storedConfig = (store.get('aiConfig') as AIConfig) || {}
-    // Determine priority: Builtin (Managed) > Stored > Runtime Env > Default
-    let effectiveConfig: AIConfig = {}
-    if (this.builtinConfig) {
-      effectiveConfig = { ...this.builtinConfig }
-      // Allow overriding model from store if it exists
-      if (storedConfig.model) {
-        effectiveConfig.model = storedConfig.model
-      }
-    } else {
-      // Securely retrieve API Key from system keychain
-      const secureKey = secureGet('apiKey') || ''
-      effectiveConfig = {
-        apiKey: secureKey || process.env.OPENAI_API_KEY,
-        baseURL: storedConfig.baseURL || process.env.OPENAI_BASE_URL,
-        model: storedConfig.model || process.env.OPENAI_MODEL || '',
-      }
-    }
-    this.model = effectiveConfig.model || ''
-    if (effectiveConfig.apiKey) {
-      const options: ClientOptions = {
-        apiKey: effectiveConfig.apiKey,
-        baseURL: effectiveConfig.baseURL,
-        defaultHeaders: {
-          'User-Agent': getAppUserAgent(),
-        },
-      }
-      this.openai = new OpenAI(options)
+    const stored = (store.get('aiConfig') as AIConfig) || {}
+
+    // Priority: Builtin (Managed) > Stored > Runtime Env
+    const effective: AIConfig = this.builtinConfig
+      ? { ...this.builtinConfig, model: stored.model || this.builtinConfig.model }
+      : {
+          apiKey: secureGet('apiKey') || process.env.OPENAI_API_KEY || '',
+          baseURL: stored.baseURL || process.env.OPENAI_BASE_URL || '',
+          model: stored.model || process.env.OPENAI_MODEL || '',
+        }
+
+    this.model = effective.model
+
+    if (effective.apiKey) {
+      this.openai = new OpenAI({
+        apiKey: effective.apiKey,
+        baseURL: effective.baseURL,
+        defaultHeaders: { 'User-Agent': getAppUserAgent() },
+      })
+      this.initAuditedClient()
     } else {
       this.openai = null
       console.warn('AI Service: Not configured (missing API Key).')
@@ -185,75 +273,88 @@ export class AIService {
     }
   }
 
-  async generatePlan(context: AIAnalysisContext): Promise<AIAnalysisResult> {
-    const client = this.requireOpenAI()
-    const aiResult = await generateAnalysis(client, context, this.model)
-    return {
-      status: aiResult.error ? 'error' : 'success',
-      ...aiResult,
-    }
-  }
+  async generatePlan(
+    context: AIAnalysisContext,
+    projectPath: string | null
+  ): Promise<AIAnalysisResult> {
+    const budget = tokenManager.checkBudget(0.05)
+    if (!budget.allowed) throw new Error(budget.reason)
 
-  async generateText(prompt: string, systemPrompt?: string): Promise<string> {
-    const client = this.requireOpenAI()
-    const response = await client.chat.completions.create({
-      model: this.model,
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt || 'You are a helpful assistant.',
-        },
-        { role: 'user', content: prompt },
-      ],
-    })
-    return response.choices[0].message.content || ''
+    return this.withAudit(
+      {
+        projectPath,
+        action: 'data_analysis',
+        snapshot: { prompt_preview: context.userQuery },
+      },
+      async client => {
+        const aiResult = await generateAnalysis(client, context, this.model)
+        return {
+          status: aiResult.error ? 'error' : 'success',
+          ...aiResult,
+        }
+      }
+    )
   }
 
   async fixQuery(
     originalSql: string,
     error: string,
     schemas: TableSchema[],
-    domainRules: DomainRule[] = []
+    domainRules: DomainRule[] = [],
+    projectPath: string | null
   ): Promise<{
     sql: string
     reasoning: string
     is_template?: boolean
-    missing_params?: any[]
+    missing_params?: FilterParam[]
   }> {
-    const client = this.requireOpenAI()
-    return await fixSQL(
-      client,
-      originalSql,
-      error,
-      schemas,
-      this.model,
-      domainRules
+    return this.withAudit(
+      {
+        projectPath,
+        action: 'sql_fix',
+        snapshot: {
+          prompt_preview: `Error: ${error.substring(0, 100)}`,
+          column: originalSql,
+        },
+      },
+      client => fixSQL(client, originalSql, error, schemas, this.model, domainRules)
     )
   }
 
   async getContextAnalysis(
     schemas: TableSchema[],
-    language: 'en' | 'zh' = 'en'
+    language: 'en' | 'zh' = 'en',
+    projectPath: string | null
   ): Promise<ContextAnalysisResult> {
-    const client = this.requireOpenAI()
-    return await analyzeContext(client, schemas, this.model, language)
+    return this.withAudit(
+      {
+        projectPath,
+        action: 'context_analysis',
+        snapshot: { prompt_preview: `Analyzing ${schemas.length} tables` },
+      },
+      client => analyzeContext(client, schemas, this.model, language)
+    )
   }
 
   async analyzeSemantics(
     tableName: string,
     columns: ColumnSchema[],
-    language: 'en' | 'zh' = 'zh'
+    language: 'en' | 'zh' = 'zh',
+    projectPath: string | null
   ) {
-    if (!this.openai) throw new Error('AI not configured')
-
     const langName = language === 'zh' ? 'Chinese (Simplified)' : 'English'
 
-    return await analyzeSemanticsEngine(
-      this.openai,
-      this.model || 'gpt-4o',
-      tableName,
-      columns,
-      langName
+    return this.withAudit(
+      {
+        projectPath,
+        action: 'semantic_analyze',
+        snapshot: {
+          table: tableName,
+          prompt_preview: `Inferring meanings for ${columns.length} columns`,
+        },
+      },
+      client =>
+        analyzeSemanticsEngine(client, this.model, tableName, columns, langName)
     )
   }
 
@@ -314,56 +415,97 @@ export class AIService {
     input: string
     columns: { name: string; type: string }[]
     mode: 'generate' | 'refine'
+    projectPath: string | null
   }): Promise<string> {
-    const { input, columns, mode } = options
-    const client = this.requireOpenAI()
-    const columnList = columns.map(c => `- ${c.name} (${c.type})`).join('\n')
-    const quotingRule = `
-CRITICAL SYNTAX RULES:
-1. **ALWAYS** wrap column names in DOUBLE QUOTES ( ").
-2. For SQLite/DuckDB compatibility, use standard SQL operators.
-3. **ONLY** generate ROW-LEVEL expressions (e.g., "A" + "B", "A" * 0.1).
-4. **NEVER** use aggregate functions like SUM(), AVG(), COUNT(), MAX(), MIN(), etc.
-`
+    const { input, columns, mode, projectPath } = options
 
-    const systemPrompt = `You are a DuckDB expert. Convert user natural language into a valid ROW-LEVEL SQL expression fragment for a SELECT clause.
-    Available columns in the current context:
-    ${columnList}
-    
-    ${quotingRule}
-    
-    Return ONLY the SQL expression, no commentary, no 'SELECT', no 'AS'.`
+    return this.withAudit(
+      { projectPath, action: 'metric_gen', snapshot: { prompt_preview: input } },
+      async client => {
+        const columnList = columns.map(c => `- ${c.name} (${c.type})`).join('\n')
+        const systemPrompt = METRIC_GEN_SYSTEM_PROMPT(columnList)
+        const userPrompt = getMetricGenUserPrompt(input, mode)
 
-    const userPrompt =
-      mode === 'generate'
-        ? `Create an expression for: ${input}`
-        : `Refine this expression: ${input}`
+        const response = await client.chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0,
+        })
 
-    const response = await client.chat.completions.create({
-      model: this.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0,
-    })
-
-    return response.choices[0].message.content?.trim() || ''
+        return response.choices[0].message.content?.trim() || ''
+      }
+    )
   }
 
   /**
    * Generate natural language insight from aggregated chart data.
    * This is part of the AI Insight feature with explicit user consent.
    */
-  async generateChartInsight(context: InsightGenerationContext): Promise<any> {
-    const client = this.requireOpenAI()
-    // Ensure default values if not provided in context (though Interface defines them as optional, engine handles them)
-    const enrichedContext = {
-      ...context,
-      language: context.language || 'en',
-      domainRules: context.domainRules || [],
-    }
-    return await generateInsight(client, enrichedContext, this.model)
+  async generateChartInsight(
+    context: InsightGenerationContext,
+    projectPath: string | null
+  ): Promise<string> {
+    return this.withAudit(
+      {
+        projectPath,
+        action: 'insight_gen',
+        snapshot: { prompt_preview: context.chartTitle || context.chartType },
+      },
+      async client => {
+        // Ensure default values if not provided in context
+        const enrichedContext = {
+          ...context,
+          language: context.language || 'en',
+          domainRules: context.domainRules || [],
+        }
+        return generateInsight(client, enrichedContext, this.model) as unknown as string
+      }
+    )
+  }
+
+  // [V1.7] Preview Extraction
+  async previewExtraction(
+    inputData: unknown[],
+    prompt: string,
+    projectPath: string | null
+  ): Promise<{ results: string[]; usage?: { input: number; output: number } }> {
+    return this.withAudit(
+      { projectPath, action: 'batch_extract', snapshot: { prompt_preview: prompt } },
+      async client => {
+        return previewExtraction(client, this.model, inputData, prompt)
+      }
+    )
+  }
+
+  // [V1.7] Start Batch Job
+  async startBatchExtraction(
+    tableName: string,
+    columnName: string,
+    targetColumnName: string,
+    prompt: string,
+    projectPath: string | null,
+    window?: BrowserWindow
+  ): Promise<{ jobId: string }> {
+    if (!this.batchProcessor) throw new Error('Batch Processor not initialized')
+
+    const jobId = 'job_' + Date.now()
+
+    // Run in background (don't await)
+    this.batchProcessor.runExtraction({
+      tableName,
+      columnName,
+      targetColumnName,
+      prompt,
+      projectPath,
+      window
+    }).catch(err => {
+      console.error(`[AIService] Batch job ${jobId} failed:`, err)
+    })
+
+    return { jobId }
   }
 
   clearConfig() {

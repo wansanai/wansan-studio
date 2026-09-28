@@ -51,7 +51,7 @@ export function delay(ms: number): Promise<void> {
 /**
  * 防抖函数
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
@@ -71,7 +71,7 @@ export function debounce<T extends (...args: any[]) => any>(
 /**
  * 节流函数
  */
-export function throttle<T extends (...args: any[]) => any>(
+export function throttle<T extends (...args: unknown[]) => unknown>(
   func: T,
   limit: number
 ): (...args: Parameters<T>) => void {
@@ -103,10 +103,10 @@ export function deepClone<T>(obj: T): T {
   }
 
   if (typeof obj === 'object') {
-    const clonedObj = {} as { [key: string]: any }
+    const clonedObj: Record<string, unknown> = {}
     for (const key in obj) {
       if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        clonedObj[key] = deepClone((obj as { [key: string]: any })[key])
+        clonedObj[key] = deepClone((obj as Record<string, unknown>)[key])
       }
     }
     return clonedObj as T
@@ -118,7 +118,7 @@ export function deepClone<T>(obj: T): T {
 /**
  * 检查是否为空值
  */
-export function isEmpty(value: any): boolean {
+export function isEmpty(value: unknown): boolean {
   if (value === null || value === undefined) return true
   if (typeof value === 'string') return value.trim() === ''
   if (Array.isArray(value)) return value.length === 0
@@ -129,7 +129,7 @@ export function isEmpty(value: any): boolean {
 /**
  * 安全的 JSON 解析
  */
-export function safeJsonParse<T = any>(str: string, defaultValue: T): T {
+export function safeJsonParse<T = unknown>(str: string, defaultValue: T): T {
   try {
     return JSON.parse(str)
   } catch {

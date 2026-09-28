@@ -84,13 +84,13 @@ export async function performMigration(name: string, location: string) {
       )
 
       try {
-        const res = await window.electronAPI.reIngestFile(
-          file.id,
-          file.path,
-          file.tableName,
-          file.sheetName,
-          file.columns // Pass existing schema to enforce types
-        )
+        const res = await window.electronAPI.reIngestFile({
+          fileId: file.id,
+          filePath: file.path,
+          tableName: file.tableName,
+          sheetName: file.sheetName,
+          columns: file.columns, // Pass existing schema to enforce types
+        })
         if (!res.success) {
           console.error(`Migration error for ${file.name}:`, res.error)
           filesToMigrate[i] = {
@@ -165,6 +165,7 @@ export async function performMigration(name: string, location: string) {
     }
 
     const semantic: SemanticLayer = {
+      tables: {},
       relations: finalRelationsMap,
       smartMetrics,
     }

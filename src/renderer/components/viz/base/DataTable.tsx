@@ -14,7 +14,7 @@ import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'luci
 import { Button } from '../../ui/button'
 
 interface ReportTableProps {
-  data: Array<Record<string, any>>
+  data: Array<Record<string, unknown>>
   columnFields?: Array<{ name: string; type: string }>
   columns?: string[] // Legacy support
   columnTypes?: Record<string, string> // Legacy support
@@ -42,22 +42,26 @@ export function DataTable({
 
   // Runtime compatibility: Reconstruct columnFields if missing
   const effectiveColumnFields = React.useMemo(() => {
-    if (columnFields && columnFields.length > 0) return columnFields
-    if (columns && columns.length > 0) {
-      return columns.map(name => ({
+    let fields: Array<{ name: string; type: string }> = []
+    
+    if (columnFields && columnFields.length > 0) {
+      fields = columnFields
+    } else if (columns && columns.length > 0) {
+      fields = columns.map(name => ({
         name,
         type: columnTypes[name] || 'VARCHAR',
       }))
-    }
-    // Final fallback: use keys from data and infer type
-    if (safeData.length > 0) {
+    } else if (safeData.length > 0) {
+      // Final fallback: use keys from data and infer type
       const sample = safeData[0]
-      return Object.keys(sample).map(name => ({
+      fields = Object.keys(sample).map(name => ({
         name,
         type: typeof sample[name] === 'number' ? 'DOUBLE' : 'VARCHAR',
       }))
     }
-    return []
+
+    // [V1.7] Always hide internal system ID
+    return fields.filter(f => f.name !== '_ws_row_id')
   }, [columnFields, columns, columnTypes, safeData])
 
   const [sorting, setSorting] = React.useState<SortingState>([])
@@ -120,7 +124,7 @@ export function DataTable({
     }
   }, [])
 
-  const columnDefs: ColumnDef<Record<string, any>>[] =
+  const columnDefs: ColumnDef<Record<string, unknown>>[] =
     effectiveColumnFields.map(field => ({
       accessorKey: field.name,
       header: field.name,
@@ -201,7 +205,7 @@ export function DataTable({
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map(header => {
                   const sorted = header.column.getIsSorted()
-                  const isNumeric = (header.column.columnDef as any).meta?.isNumeric
+                  const isNumeric = (header.column.columnDef.meta as { isNumeric?: boolean } | undefined)?.isNumeric
                   
                   return (
                     <th
@@ -273,7 +277,7 @@ export function DataTable({
                     )}
                   >
                   {row.getVisibleCells().map(cell => {
-                    const isNumeric = (cell.column.columnDef as any).meta?.isNumeric
+                    const isNumeric = (cell.column.columnDef.meta as { isNumeric?: boolean } | undefined)?.isNumeric
 
                     return (
                       <td
